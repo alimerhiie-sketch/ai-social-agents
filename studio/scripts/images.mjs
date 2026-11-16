@@ -113,14 +113,42 @@ async function cloudflare({ prompt, seed, out, aspect = "portrait", reference })
 }
 
 // ---------- 2. Local ComfyUI (SDXL Lightning, low-VRAM) ----------
+
+async function comfyUp(base) {
+  try {
+    return (await fetchWithTimeout(`${base}/system_stats`, {}, 2500)).ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Starts the portable ComfyUI in COMFYUI_DIR (if set) and waits for it. It keeps running in the
+ * background afterwards, so the next images don't pay the start-up cost again.
+ */
+async function startComfy(base) {
+  const dir = process.env.COMFYUI_DIR;
+  if (!dir || !fs.existsSync(path.join(dir, "python_embeded", "python.exe"))) throw new Error("Local ComfyUI is not running (and COMFYUI_DIR is not set up)");
+  const { spawn } = await import("node:child_process");
+  const port = new URL(base).port || "8188";
+  console.log("PROGRESS Starting local ComfyUI on the GPU (first start takes ~1 minute)…");
+  const child = spawn(
+    path.join(dir, "python_embeded", "python.exe"),
+    ["-s", path.join("ComfyUI", "main.py"), "--windows-standalone-build", "--lowvram", "--listen", "127.0.0.1", "--port", port, "--disable-auto-launch", "--preview-method", "none"],
+    { cwd: dir, detached: true, stdio: "ignore", windowsHide: true },
+  );
+  child.unref();
+  const deadline = Date.now() + 180_000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000));
+    if (await comfyUp(base)) return;
+  }
+  throw new Error("Local ComfyUI did not start within 3 minutes");
+}
 async function comfy({ prompt, seed, out, aspect = "portrait" }) {
   const base = process.env.COMFYUI_URL || "http://127.0.0.1:8188";
-  const ckpt = process.env.COMFYUI_CHECKPOINT || "dreamshaperXL_lightningDPMSDE.safetensors";
-  try {
-    await fetchWithTimeout(`${base}/system_stats`, {}, 2500);
-  } catch {
-    throw new Error("Local ComfyUI is not running");
-  }
+  const ckpt = process.env.COMFYUI_CHECKPOINT || "DreamShaperXL_Lightning-SFW.safetensors";
+  if (!(await comfyUp(base))) await startComfy(base);
   const graph = {
     "1": { class_type: "CheckpointLoaderSimple", inputs: { ckpt_name: ckpt } },
     "2": { class_type: "CLIPTextEncode", inputs: { text: prompt, clip: ["1", 1] } },
