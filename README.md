@@ -1,36 +1,43 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Agent HQ
 
-## Getting Started
+Control room for the AI agents that grow your Instagram and TikTok accounts. Runs on your PC and your Claude
+subscription. Costs nothing extra.
 
-First, run the development server:
+## Run it
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm run dev -- -p 3210
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3210
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## One-time: sign the agents in
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The agents run through the Claude Code CLI on your subscription. Its sign-in had expired, so:
 
-## Learn More
+```bash
+claude setup-token
+```
 
-To learn more about Next.js, take a look at the following resources:
+Copy the token it prints into a new file `.env.local` in this folder:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```
+CLAUDE_CODE_OAUTH_TOKEN=paste-the-token-here
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Restart the dashboard. The red "Agents can't run yet" banner disappears once it works.
+(`claude auth login` also works, but that login expires; the setup token lasts about a year.)
 
-## Deploy on Vercel
+## Using it
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. **Accounts → New account**: niche, audience, language, platforms, and the content types the account may make
+   (formats, video styles, tone, posts per week).
+2. On the account page: **Build strategy** → **Find trends** → **Plan the week**, or **Run weekly cycle** for all three.
+3. **Pipeline**: open each script, approve it, or reject it with a reason. The Strategist reads your reasons next time.
+4. **Agents**: watch runs live and pick each agent's model. Heavier models use more of your plan's usage limit.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Where things live
+
+- Agents: `.claude/agents/trend-scout.md`, `.claude/agents/strategist.md` (edit these to change how they think)
+- Job queue / CLI bridge: `src/lib/agents/runner.ts`
+- Data + run logs: `%LOCALAPPDATA%\ai-social-agents\` (kept out of OneDrive on purpose)

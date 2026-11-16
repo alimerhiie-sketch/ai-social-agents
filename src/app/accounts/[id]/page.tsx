@@ -1,0 +1,243 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { q } from "@/lib/db";
+import { FORMATS, VIDEO_STYLES } from "@/lib/options";
+import type { Strategy } from "@/lib/types";
+import { runCycle, runJob } from "../../actions";
+import { CliBanner, CopyButton, SubmitButton } from "@/components/client";
+import { Badge, Empty, FormatBadge, PageHeader, Section, TextLink, timeAgo } from "@/components/ui";
+
+export default async function AccountPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const a = q.account(Number(id));
+  if (!a) notFound();
+  const c = q.counts(a.id);
+  const trends = q.trends({ accountId: a.id, status: "new", limit: 4 });
+  const content = q.content({ accountId: a.id, limit: 6 });
+  const label = (list: { id: string; label: string }[], ids: string[]) => ids.map((i) => list.find((x) => x.id === i)?.label ?? i);
+
+  return (
+    <>
+      <PageHeader
+        eyebrow="Account"
+        title={a.name}
+        actions={
+          <>
+            <Link href={`/accounts/${a.id}/edit`} className="btn btn-ghost">
+              Edit profile
+            </Link>
+            <form action={runCycle.bind(null, a.id)}>
+              <SubmitButton className="btn btn-primary" pending="Queuing…">
+                Run weekly cycle
+              </SubmitButton>
+            </form>
+          </>
+        }
+      >
+        {a.niche}
+      </PageHeader>
+
+      <CliBanner />
+
+      <div className="mb-10 grid gap-3 md:grid-cols-3">
+        <ActionCard
+          title="Build strategy"
+          body={a.strategy ? `Last built ${timeAgo(a.strategy_updated_at)}. Rebuild after big profile changes or once you have feedback.` : "Positioning, pillars, cadence, bios and a 30-day plan."}
+          action={runJob.bind(null, "strategy", a.id)}
+          label={a.strategy ? "Rebuild" : "Build strategy"}
+          agent="Strategist"
+        />
+        <ActionCard title="Find trends" body={`${c.newTrends} unused trends right now. Scans TikTok, Google, Reddit, YouTube and news.`} action={runJob.bind(null, "trends", a.id)} label="Scan now" agent="Trend Scout" />
+        <ActionCard title="Plan the week" body={`Scripts ${a.posts_per_week} posts from the strategy and the freshest trends.`} action={runJob.bind(null, "plan", a.id)} label="Plan week" agent="Strategist" />
+      </div>
+
+      <div className="mb-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Fact label="Language" value={a.language} />
+        <Fact label="Platforms" value={a.platforms.map((p) => (p === "instagram" ? `Instagram${a.ig_handle ? ` @${a.ig_handle}` : ""}` : `TikTok${a.tiktok_handle ? ` @${a.tiktok_handle}` : ""}`)).join(" · ")} />
+        <Fact label="Formats" value={label(FORMATS, a.formats).join(", ") || "—"} />
+        <Fact label="Video styles" value={label(VIDEO_STYLES, a.video_styles).join(", ") || "—"} />
+      </div>
+
+      {a.strategy ? <StrategyView s={a.strategy} /> : (
+        <Section title="Strategy">
+          <Empty title="No strategy yet">Build it first. Everything the agents plan follows from it.</Empty>
+        </Section>
+      )}
+
+      <div className="grid gap-10 lg:grid-cols-2">
+        <Section title="Freshest trends" aside={<TextLink href={`/trends?account=${a.id}`}>All trends</TextLink>}>
+          {trends.length === 0 ? (
+            <div className="text-sm text-dim">None yet. Run Find trends.</div>
+          ) : (
+            <div className="panel divide-y divide-line">
+              {trends.map((t) => (
+                <div key={t.id} className="flex items-start gap-3 px-4 py-3">
+                  <span className="mt-0.5 font-mono text-xs tabular-nums text-accent">{t.fit_score}</span>
+                  <div className="min-w-0">
+                    <div className="text-sm text-fg">{t.title}</div>
+                    <div className="line-clamp-1 text-xs text-dim">{t.angle}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </Section>
+        <Section title="Latest scripts" aside={<TextLink href={`/pipeline?account=${a.id}`}>Pipeline</TextLink>}>
+          {content.length === 0 ? (
+            <div className="text-sm text-dim">None yet. Run Plan the week.</div>
+          ) : (
+            <div className="panel divide-y divide-line">
+              {content.map((it) => (
+                <Link key={it.id} href={`/pipeline/${it.id}`} className="flex items-center gap-3 px-4 py-3 transition-colors hover:bg-panel-2">
+                  <FormatBadge format={it.format} />
+                  <span className="min-w-0 flex-1 truncate text-sm">{it.title}</span>
+                  <Badge tone={it.status === "approved" ? "good" : it.status === "rejected" ? "bad" : "neutral"}>{it.status}</Badge>
+                </Link>
+              ))}
+            </div>
+          )}
+        </Section>
+      </div>
+    </>
+  );
+}
+
+function ActionCard({ title, body, action, label, agent }: { title: string; body: string; action: () => Promise<void>; label: string; agent: string }) {
+  return (
+    <div className="panel flex flex-col p-5">
+      <div className="eyebrow">{agent}</div>
+      <div className="mt-2 text-[15px] font-medium">{title}</div>
+      <p className="mt-1 flex-1 text-[13px] leading-relaxed text-muted">{body}</p>
+      <form action={action} className="mt-4">
+        <SubmitButton className="btn w-full" pending="Starting…">
+          {label}
+        </SubmitButton>
+      </form>
+    </div>
+  );
+}
+
+function Fact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-line px-4 py-3">
+      <div className="eyebrow">{label}</div>
+      <div className="mt-1 text-[13px] text-fg">{value}</div>
+    </div>
+  );
+}
+
+function StrategyView({ s }: { s: Strategy }) {
+  return (
+    <Section title="Strategy">
+      <div className="space-y-3">
+        <div className="panel grid gap-6 p-6 md:grid-cols-2">
+          <div>
+            <div className="eyebrow mb-2">Positioning</div>
+            <p className="text-[14px] leading-relaxed text-fg">{s.positioning}</p>
+          </div>
+          <div>
+            <div className="eyebrow mb-2">Audience</div>
+            <p className="text-[14px] leading-relaxed text-muted">{s.audience}</p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2">
+          {(["instagram", "tiktok"] as const).map((p) => (
+            <div key={p} className="panel p-5">
+              <div className="flex items-center justify-between">
+                <div className="eyebrow">{p === "instagram" ? "Instagram bio" : "TikTok bio"}</div>
+                <CopyButton text={s.bio[p]} />
+              </div>
+              <p className="mt-2 whitespace-pre-line text-sm text-fg">{s.bio[p]}</p>
+            </div>
+          ))}
+        </div>
+
+        <div className="panel p-6">
+          <div className="eyebrow mb-4">Content pillars</div>
+          <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+            {s.pillars.map((p) => (
+              <div key={p.name}>
+                <div className="flex items-baseline justify-between gap-2">
+                  <span className="text-sm font-medium">{p.name}</span>
+                  <span className="font-mono text-xs text-accent">{p.share_percent}%</span>
+                </div>
+                <div className="mt-2 h-px bg-line">
+                  <div className="h-px bg-accent" style={{ width: `${p.share_percent}%` }} />
+                </div>
+                <p className="mt-2 text-[13px] leading-relaxed text-muted">{p.description}</p>
+                <ul className="mt-2 space-y-1 text-xs text-dim">
+                  {p.example_ideas.map((e) => (
+                    <li key={e}>— {e}</li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-2">
+          <div className="panel p-6">
+            <div className="eyebrow mb-3">Format mix</div>
+            <div className="space-y-3">
+              {s.formats.map((f, i) => (
+                <div key={i} className="flex gap-3">
+                  <span className="w-8 shrink-0 font-mono text-sm text-accent">{f.per_week}×</span>
+                  <div>
+                    <div className="flex gap-1.5">
+                      <FormatBadge format={f.format} />
+                      <Badge tone="info">{f.platform}</Badge>
+                    </div>
+                    <p className="mt-1 text-[13px] text-muted">{f.why}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="panel p-6">
+            <div className="eyebrow mb-3">Cadence · {s.cadence.posts_per_week} posts / week</div>
+            <div className="flex flex-wrap gap-1.5">
+              {s.cadence.best_times.map((t) => (
+                <Badge key={t}>{t}</Badge>
+              ))}
+            </div>
+            <p className="mt-3 text-[13px] leading-relaxed text-muted">{s.cadence.notes}</p>
+            <div className="eyebrow mb-2 mt-6">Voice</div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <List items={s.voice.do} mark="+" tone="text-good" />
+              <List items={s.voice.dont} mark="−" tone="text-bad" />
+            </div>
+          </div>
+        </div>
+
+        <div className="grid gap-3 lg:grid-cols-3">
+          <div className="panel p-6">
+            <div className="eyebrow mb-3">Growth plays</div>
+            <List items={s.growth_plays} mark="→" tone="text-accent" />
+          </div>
+          <div className="panel p-6">
+            <div className="eyebrow mb-3">First 30 days</div>
+            <List items={s.first_30_days} mark="·" tone="text-muted" />
+          </div>
+          <div className="panel p-6">
+            <div className="eyebrow mb-3">What we measure</div>
+            <List items={s.kpis} mark="◦" tone="text-info" />
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+function List({ items, mark, tone }: { items: string[]; mark: string; tone: string }) {
+  return (
+    <ul className="space-y-2">
+      {items.map((it, i) => (
+        <li key={i} className="flex gap-2 text-[13px] leading-relaxed text-muted">
+          <span className={`${tone} shrink-0`}>{mark}</span>
+          <span>{it}</span>
+        </li>
+      ))}
+    </ul>
+  );
+}
