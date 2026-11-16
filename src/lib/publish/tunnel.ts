@@ -103,7 +103,8 @@ export async function publicMediaBase(root: string): Promise<string> {
 }
 
 async function waitReachable(url: string) {
-  const deadline = Date.now() + 45_000;
+  // Measured on this connection: ~30 s before a new trycloudflare.com host answers.
+  const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     try {
       const r = await fetch(url, { method: "GET" });
