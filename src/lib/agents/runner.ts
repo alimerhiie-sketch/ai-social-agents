@@ -1,13 +1,14 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { db, LOG_DIR, q } from "../db";
+import { DATA_DIR, db, LOG_DIR, q } from "../db";
 import type { Job, JobKind } from "../types";
 import { claudeBin } from "../claude-cli";
 import { applyResult } from "./apply";
 import { buildPrompt } from "./prompts";
 import { agentById, JOB_KINDS } from "./registry";
-import { planSchema, strategySchema, trendsSchema } from "./schemas";
+import { planSchema, scenePlanSchema, strategySchema, trendsSchema } from "./schemas";
+import { nextDays } from "../dates";
 
 // The job queue. One agent runs at a time: it protects your subscription usage limits
 // and keeps your PC responsive. Each job is one headless `claude -p` run.
@@ -20,40 +21,130 @@ const SCHEMAS: Record<JobKind, object> = {
   trends: trendsSchema,
   plan: planSchema,
   "from-trend": planSchema,
+  video: scenePlanSchema,
+  design: scenePlanSchema,
+  render: {},
 };
 
 type State = { running: Map<number, ChildProcess>; booted: boolean };
 const g = globalThis as unknown as { __hqRunner?: State };
 const state: State = (g.__hqRunner ??= { running: new Map(), booted: false });
 
+// Next's dev server can load this module more than once (separate module contexts for routes,
+// pages and actions), so nothing here may assume it is the only copy. Ownership lives in the DB:
+// a running job records the server process that owns it, and only counts as interrupted when
+// that process is really gone.
+
+function alive(pid: number | null | undefined): boolean {
+  if (!pid) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === "EPERM";
+  }
+}
+
+/** Running jobs whose owning server process died (a real restart or crash) are marked failed. */
+function reapOrphans() {
+  const running = db.prepare("SELECT id, runner_pid, child_pid FROM jobs WHERE status = 'running'").all() as {
+    id: number;
+    runner_pid: number | null;
+    child_pid: number | null;
+  }[];
+  for (const j of running) {
+    if (alive(j.runner_pid)) continue;
+    if (alive(j.child_pid)) {
+      try {
+        process.kill(j.child_pid!);
+      } catch {}
+    }
+    db.prepare(
+      "UPDATE jobs SET status = 'failed', error = 'Interrupted: the dashboard server stopped while this job was running', finished_at = datetime('now') WHERE id = ? AND status = 'running'",
+    ).run(j.id);
+    log(j.id, "✗ Interrupted: the dashboard server stopped while this job was running");
+  }
+}
+
 if (!state.booted) {
   state.booted = true;
-  // A fresh server process means any job still marked "running" lost its process.
-  db.prepare(
-    "UPDATE jobs SET status = 'failed', error = 'Interrupted: the dashboard server restarted while this job was running', finished_at = datetime('now') WHERE status = 'running'",
-  ).run();
   setTimeout(kick, 500);
 }
 
 export const logPath = (jobId: number) => path.join(LOG_DIR, `job-${jobId}.log`);
 const log = (jobId: number, line: string) => fs.appendFileSync(logPath(jobId), line + "\n");
 
-export function modelFor(agentId: string): string {
+/** Script-writing jobs run many times a day, so they get their own (lighter) model setting. */
+export const isScriptJob = (kind: JobKind) => kind === "plan" || kind === "from-trend";
+
+export function modelFor(agentId: string, kind?: JobKind): string {
+  if (kind && isScriptJob(kind)) return q.setting(`model:${agentId}:scripts`, "sonnet");
   return q.setting(`model:${agentId}`, agentById(agentId)?.defaultModel ?? "sonnet");
 }
 
-export function enqueue(kind: JobKind, accountId: number, opts: { refId?: number; dependsOn?: number } = {}): number {
+export function enqueue(
+  kind: JobKind,
+  accountId: number,
+  opts: { refId?: number; dependsOn?: number; targetDate?: string } = {},
+): number {
   const agent = JOB_KINDS[kind].agent;
   const r = db
-    .prepare("INSERT INTO jobs (kind, agent, account_id, ref_id, depends_on, status) VALUES (?, ?, ?, ?, ?, 'queued')")
-    .run(kind, agent, accountId, opts.refId ?? null, opts.dependsOn ?? null);
+    .prepare(
+      "INSERT INTO jobs (kind, agent, account_id, ref_id, depends_on, target_date, status) VALUES (?, ?, ?, ?, ?, ?, 'queued')",
+    )
+    .run(kind, agent, accountId, opts.refId ?? null, opts.dependsOn ?? null, opts.targetDate ?? null);
   const id = Number(r.lastInsertRowid);
-  log(id, `◦ Queued: ${JOB_KINDS[kind].label}${opts.dependsOn ? ` (waits for job #${opts.dependsOn})` : ""}`);
+  log(
+    id,
+    `◦ Queued: ${JOB_KINDS[kind].label}${opts.targetDate ? ` for ${opts.targetDate}` : ""}${opts.dependsOn ? ` (waits for job #${opts.dependsOn})` : ""}`,
+  );
   setTimeout(kick, 0);
   return id;
 }
 
-/** Manager (basic): strategy if missing → trends → weekly plan, as a chain of dependent jobs. */
+/**
+ * One day-plan job per day for the next 7 days, skipping days that already have their full
+ * daily mix (or a plan job waiting). Jobs run one after another, so each day sees the days
+ * planned before it and doesn't repeat them.
+ */
+export function enqueuePlanWeek(accountId: number, dependsOn?: number): number[] {
+  const a = q.account(accountId);
+  if (!a) throw new Error("Account not found");
+  const quota = a.reels_per_day + a.posts_per_day;
+  const ids: number[] = [];
+  for (const date of nextDays(7)) {
+    const have = (
+      db
+        .prepare("SELECT COUNT(*) n FROM content WHERE account_id = ? AND planned_date = ? AND status != 'rejected'")
+        .get(accountId, date) as { n: number }
+    ).n;
+    const pending = (
+      db
+        .prepare("SELECT COUNT(*) n FROM jobs WHERE account_id = ? AND kind = 'plan' AND target_date = ? AND status IN ('queued','running')")
+        .get(accountId, date) as { n: number }
+    ).n;
+    if (have >= quota || pending > 0) continue;
+    ids.push(enqueue("plan", accountId, { targetDate: date, dependsOn }));
+  }
+  return ids;
+}
+
+/** Produce one approved piece: the right agent plans it, then the renderer paints, voices and renders it. */
+export function enqueueProduce(contentId: number): number[] {
+  const c = q.contentItem(contentId);
+  if (!c) throw new Error("Content not found");
+  const busy = db
+    .prepare("SELECT COUNT(*) n FROM jobs WHERE ref_id = ? AND kind IN ('video','design','render') AND status IN ('queued','running')")
+    .get(contentId) as { n: number };
+  if (busy.n) return [];
+  db.prepare("UPDATE content SET status = 'producing', updated_at = datetime('now') WHERE id = ?").run(contentId);
+  // Re-render with the existing plan if there is one (e.g. after a template change); otherwise plan first.
+  if (c.production) return [enqueue("render", c.account_id, { refId: contentId })];
+  const plan = enqueue(c.format === "reel" ? "video" : "design", c.account_id, { refId: contentId });
+  return [plan, enqueue("render", c.account_id, { refId: contentId, dependsOn: plan })];
+}
+
+/** Manager (basic): strategy if missing → trends → the next 7 days, as a chain of dependent jobs. */
 export function enqueueCycle(accountId: number): number[] {
   const a = q.account(accountId);
   if (!a) throw new Error("Account not found");
@@ -63,15 +154,21 @@ export function enqueueCycle(accountId: number): number[] {
   if (prev) ids.push(prev);
   prev = enqueue("trends", accountId, { dependsOn: prev });
   ids.push(prev);
-  ids.push(enqueue("plan", accountId, { dependsOn: prev }));
+  ids.push(...enqueuePlanWeek(accountId, prev));
   return ids;
 }
 
 export function cancel(jobId: number) {
+  const job = db.prepare("SELECT status, child_pid FROM jobs WHERE id = ?").get(jobId) as
+    | { status: string; child_pid: number | null }
+    | undefined;
+  if (job?.status === "running" || job?.status === "queued") log(jobId, "✗ Cancelled by you");
   const child = state.running.get(jobId);
-  if (child) {
-    log(jobId, "✗ Cancelled by you");
-    child.kill();
+  if (child) child.kill();
+  else if (job?.status === "running" && alive(job.child_pid)) {
+    try {
+      process.kill(job.child_pid!); // owned by another module copy: kill the agent process directly
+    } catch {}
   }
   db.prepare(
     "UPDATE jobs SET status = 'cancelled', finished_at = datetime('now') WHERE id = ? AND status IN ('queued','running')",
@@ -80,7 +177,10 @@ export function cancel(jobId: number) {
 }
 
 export function kick() {
-  if (state.running.size >= MAX_CONCURRENT) return;
+  reapOrphans();
+  // Count running jobs across every copy of this module, not just this one.
+  const runningNow = (db.prepare("SELECT COUNT(*) n FROM jobs WHERE status = 'running'").get() as { n: number }).n;
+  if (runningNow >= MAX_CONCURRENT) return;
   const queued = db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY id").all() as unknown as Job[];
   for (const job of queued) {
     if (job.depends_on) {
@@ -108,8 +208,9 @@ function describeTool(name: string, input: Record<string, unknown>): string {
 }
 
 function start(job: Job) {
+  if (job.kind === "render") return startRender(job);
   const agent = agentById(job.agent)!;
-  const model = modelFor(agent.id);
+  const model = modelFor(agent.id, job.kind);
   let prompt: string;
   try {
     prompt = buildPrompt(job);
@@ -122,7 +223,15 @@ function start(job: Job) {
     return;
   }
 
-  db.prepare("UPDATE jobs SET status = 'running', model = ?, started_at = datetime('now') WHERE id = ?").run(model, job.id);
+  // Atomic claim: only one copy of the queue can move this job to running, and only while
+  // the global concurrency limit has room. Losing the race simply means someone else runs it.
+  const claimed = db
+    .prepare(
+      `UPDATE jobs SET status = 'running', model = ?, runner_pid = ?, error = NULL, started_at = datetime('now')
+       WHERE id = ? AND status = 'queued' AND (SELECT COUNT(*) FROM jobs WHERE status = 'running') < ?`,
+    )
+    .run(model, process.pid, job.id, MAX_CONCURRENT);
+  if (Number(claimed.changes) !== 1) return;
   log(job.id, `▸ ${agent.name} started · model ${model}`);
 
   const args = [
@@ -147,6 +256,7 @@ function start(job: Job) {
     stdio: ["pipe", "pipe", "pipe"],
   });
   state.running.set(job.id, child);
+  if (child.pid) db.prepare("UPDATE jobs SET child_pid = ? WHERE id = ?").run(child.pid, job.id);
 
   const startedAt = Date.now();
   const raw = fs.createWriteStream(path.join(LOG_DIR, `job-${job.id}.jsonl`));
@@ -203,6 +313,7 @@ function start(job: Job) {
 
     const fail = (msg: string) => {
       log(job.id, `✗ ${msg}`);
+      if ((job.kind === "video" || job.kind === "design") && job.ref_id) contentBack(job.ref_id);
       db.prepare(
         "UPDATE jobs SET status = 'failed', error = ?, duration_ms = ?, cost_usd = ?, finished_at = datetime('now') WHERE id = ?",
       ).run(msg, duration, (result?.total_cost_usd as number) ?? null, job.id);
@@ -218,7 +329,7 @@ function start(job: Job) {
         if (!data) throw new Error("The agent finished but returned no structured output");
         const summary = applyResult(current ?? job, data);
         db.prepare(
-          "UPDATE jobs SET status = 'done', summary = ?, duration_ms = ?, cost_usd = ?, finished_at = datetime('now') WHERE id = ?",
+          "UPDATE jobs SET status = 'done', error = NULL, summary = ?, duration_ms = ?, cost_usd = ?, finished_at = datetime('now') WHERE id = ?",
         ).run(summary, duration, (result.total_cost_usd as number) ?? null, job.id);
         log(job.id, `✓ Done in ${Math.round(duration / 1000)}s — ${summary}`);
       }
@@ -249,4 +360,115 @@ export function readLog(jobId: number, maxLines = 400): string[] {
   } catch {
     return [];
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// Render jobs: no agent, just the studio pipeline (paint → voice → Remotion).
+
+const STUDIO = path.join(process.cwd(), "studio");
+export const MEDIA_DIR = path.join(DATA_DIR, "media");
+
+function contentBack(contentId: number) {
+  db.prepare("UPDATE content SET status = 'approved', updated_at = datetime('now') WHERE id = ? AND status = 'producing'").run(contentId);
+}
+
+function paletteFor(colors: string[]) {
+  const [field, deep, soft, ink] = colors;
+  return { field: field || "#1330E0", deep: deep || "#0B1FA8", soft: soft || "#93A6FF", ink: ink || "#FFFFFF" };
+}
+
+function startRender(job: Job) {
+  const claimed = db
+    .prepare(
+      `UPDATE jobs SET status = 'running', model = 'local', runner_pid = ?, error = NULL, started_at = datetime('now')
+       WHERE id = ? AND status = 'queued' AND (SELECT COUNT(*) FROM jobs WHERE status = 'running') < ?`,
+    )
+    .run(process.pid, job.id, MAX_CONCURRENT);
+  if (Number(claimed.changes) !== 1) return;
+
+  const c = job.ref_id ? q.contentItem(job.ref_id) : null;
+  const a = c ? q.account(c.account_id) : null;
+  const finish = (status: "done" | "failed", summary: string | null, error: string | null, started: number) => {
+    db.prepare("UPDATE jobs SET status = ?, summary = ?, error = ?, duration_ms = ?, finished_at = datetime('now') WHERE id = ?").run(
+      status,
+      summary,
+      error,
+      Date.now() - started,
+      job.id,
+    );
+    setTimeout(kick, 0);
+  };
+  const started = Date.now();
+  if (!c || !a || !c.production) {
+    log(job.id, "✗ Nothing to render: the piece has no scene plan");
+    if (c) contentBack(c.id);
+    return finish("failed", null, "Nothing to render: the piece has no scene plan", started);
+  }
+
+  const rel = `content-${c.id}/v${job.id}`;
+  const outDir = path.join(MEDIA_DIR, rel);
+  fs.mkdirSync(outDir, { recursive: true });
+  const spec = {
+    kind: c.format === "reel" ? "reel" : "slides",
+    outDir,
+    bundleCacheDir: path.join(DATA_DIR, "bundles"),
+    palette: paletteFor(a.brand_colors),
+    handle: a.ig_handle || a.tiktok_handle || a.name.replace(/\s+/g, "").toLowerCase(),
+    voice: q.setting("voice", "af_heart"),
+    speed: Number(q.setting("voice_speed", "1.0")),
+    showCaptions: true,
+    artStyle: c.art_style || a.art_styles[0] || "ghibli",
+    character: a.character || null,
+    seed: c.id * 7919,
+    scenes: c.production.scenes,
+  };
+  const specPath = path.join(outDir, "spec.json");
+  fs.writeFileSync(specPath, JSON.stringify(spec, null, 2));
+  log(job.id, `▸ Renderer started · ${spec.kind} · ${spec.scenes.length} ${spec.kind === "reel" ? "scenes" : "slides"} · style ${spec.artStyle}`);
+
+  const child = spawn(process.execPath, ["scripts/render.mjs", specPath], { cwd: STUDIO, env: process.env, windowsHide: true });
+  state.running.set(job.id, child);
+  if (child.pid) db.prepare("UPDATE jobs SET child_pid = ? WHERE id = ?").run(child.pid, job.id);
+
+  let buf = "";
+  let result: Record<string, unknown> | null = null;
+  let errTail = "";
+  child.stdout.on("data", (d: Buffer) => {
+    buf += d.toString("utf8");
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const line = buf.slice(0, nl).trim();
+      buf = buf.slice(nl + 1);
+      if (line.startsWith("PROGRESS ")) log(job.id, `› ${line.slice(9)}`);
+      else if (line.startsWith("RESULT ")) {
+        try {
+          result = JSON.parse(line.slice(7));
+        } catch {}
+      }
+    }
+  });
+  child.stderr.on("data", (d: Buffer) => (errTail = (errTail + d.toString("utf8")).slice(-2000)));
+  const timer = setTimeout(() => child.kill(), 45 * 60 * 1000);
+
+  child.on("close", () => {
+    clearTimeout(timer);
+    state.running.delete(job.id);
+    if (q.job(job.id)?.status === "cancelled") {
+      contentBack(c.id);
+      return setTimeout(kick, 0);
+    }
+    if (result && !result.error) {
+      const media = { ...result, dir: rel };
+      db.prepare("UPDATE content SET media = ?, status = 'review', updated_at = datetime('now') WHERE id = ?").run(JSON.stringify(media), c.id);
+      const what = result.kind === "reel" ? `${Number(result.durationSeconds).toFixed(0)}s video` : `${(result.files as string[]).length} slide(s)`;
+      const summary = `Rendered ${what} — waiting for your final review`;
+      log(job.id, `✓ ${summary}`);
+      return finish("done", summary, null, started);
+    }
+    const msg = String(result?.error ?? errTail.trim().split("\n").filter((l) => !/Version mismatch|zod|remotion\.dev|-{5}|To resolve|breakages|^\s*-|^\s*$/.test(l)).slice(-3).join(" ") ?? "Render failed");
+    log(job.id, `✗ ${msg}`);
+    contentBack(c.id);
+    finish("failed", null, msg || "Render failed", started);
+  });
 }

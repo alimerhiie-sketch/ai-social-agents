@@ -1,5 +1,7 @@
 import { db, q } from "../db";
 import type { Account, Job } from "../types";
+import { longDate, weekdayShort } from "../dates";
+import { ART_STYLES } from "../options";
 
 // Builds the task prompt for each job kind. Built when the job STARTS, not when it is
 // queued, so a "plan" job that follows a "trends" job sees the trends that were just found.
@@ -20,7 +22,9 @@ function profile(a: Account) {
       tones: a.tones,
       allowed_formats: a.formats,
       allowed_video_styles: a.video_styles,
-      posts_per_week: a.posts_per_week,
+      allowed_art_styles: a.art_styles.length ? a.art_styles : ["ghibli"],
+      recurring_character: a.character || "(none — invent scenes without a mascot)",
+      daily_output: `${a.reels_per_day} short video(s) + ${a.posts_per_day} feed post(s) every day`,
       brand_colors: a.brand_colors,
       topics_to_avoid: a.avoid || "(none given)",
       inspiration_accounts: a.inspiration || "(none given)",
@@ -79,7 +83,7 @@ export function buildPrompt(job: Job): string {
         feedback(a.id),
         "",
         "Research briefly (3–5 searches) to see what is winning in this niche, then return the strategy as structured output.",
-        "Only use formats from allowed_formats. Respect posts_per_week unless it is clearly too low to grow, in which case say so in cadence.notes.",
+        `The owner has fixed the daily output: ${a.reels_per_day} short video(s) and ${a.posts_per_day} feed post(s) (carousel or single image) EVERY day = ${7 * (a.reels_per_day + a.posts_per_day)} pieces a week. Build the format mix, cadence and best posting times around exactly that. Only use formats from allowed_formats.`,
       ].join("\n");
 
     case "trends": {
@@ -103,32 +107,84 @@ export function buildPrompt(job: Job): string {
     }
 
     case "plan": {
-      const n = Math.max(1, Math.min(10, a.posts_per_week));
+      const date = job.target_date;
+      if (!date) throw new Error("Day plan job has no target date");
+      const reels = a.formats.includes("reel") ? a.reels_per_day : 0;
+      const feedFormats = a.formats.filter((f) => f === "carousel" || f === "post");
+      const posts = feedFormats.length ? a.posts_per_day : 0;
+      const n = reels + posts;
+      if (n === 0) throw new Error("This account's daily mix is 0 reels and 0 posts");
+      const sameWeek = db
+        .prepare(
+          "SELECT planned_date, format, title, pillar FROM content WHERE account_id = ? AND planned_date BETWEEN date(?, '-6 days') AND date(?, '+6 days') AND status != 'rejected' ORDER BY planned_date",
+        )
+        .all(a.id, date, date) as { planned_date: string; format: string; title: string; pillar: string }[];
       const trends = db
         .prepare("SELECT title, summary, angle, format, fit_score, momentum, time_sensitivity FROM trends WHERE account_id = ? AND status = 'new' AND created_at > datetime('now','-7 days') ORDER BY fit_score DESC LIMIT 12")
         .all(a.id) as Record<string, string | number>[];
       return [
-        `Today is ${today()}.`,
-        `Plan and fully script the next ${n} pieces of content for this account (one week).`,
+        `Today is ${today()}. You are scripting the posts for ${longDate(date)}.`,
+        "",
+        "THE DAY'S MIX (exact — return exactly these, no more, no less)",
+        `- ${reels} short video${reels === 1 ? "" : "s"}: format "reel"`,
+        `- ${posts} feed post${posts === 1 ? "" : "s"}: format ${feedFormats.map((f) => `"${f}"`).join(" or ")}${feedFormats.length > 1 ? " (mix them; carousels for teaching, single posts for one bold idea)" : ""}`,
+        "Make the pieces of one day different from each other: different pillars, different hook styles. Space time-sensitive trends to the earliest days.",
         "",
         "ACCOUNT PROFILE",
         profile(a),
         "",
         strategyBlock(a),
         "",
-        "FRESH TRENDS (use the strongest where they fit; set trend_title to the exact title; mix with evergreen pillar content)",
+        "FRESH TRENDS (use the strongest where they fit; set trend_title to the exact title; a trend used on another day is already marked used and won't appear here)",
         trends.length
           ? trends.map((t) => `- ${t.title} [fit ${t.fit_score}, ${t.momentum}, ${t.time_sensitivity}, ${t.format}] — ${t.summary} Angle: ${t.angle}`).join("\n")
-          : "(no fresh trends — make it all evergreen pillar content)",
+          : "(no fresh trends — make it evergreen pillar content)",
         "",
-        "RECENT CONTENT (do not repeat)",
+        "ALREADY PLANNED AROUND THIS DATE (balance pillars against these; never repeat them)",
+        sameWeek.length ? sameWeek.map((c) => `- ${c.planned_date} [${c.format}] ${c.title} (${c.pillar})`).join("\n") : "(nothing yet — this is the first day planned)",
+        "",
+        "OLDER CONTENT (do not repeat)",
         recentContent(a.id),
         "",
         feedback(a.id),
         "",
-        `Return exactly ${n} items as structured output. Only use allowed_formats and allowed_video_styles. Spread suggested_day across the week, putting time-sensitive trends first.`,
+        `Return exactly ${n} items as structured output. Only use allowed_formats and allowed_video_styles. Set suggested_day to ${weekdayShort(date)}.`,
       ].join("\n");
     }
+
+    case "video":
+    case "design": {
+      const c = job.ref_id ? q.contentItem(job.ref_id) : null;
+      if (!c) throw new Error("Content item not found for this job");
+      const style = ART_STYLES.find((s) => s.id === (c.art_style || a.art_styles[0])) ?? ART_STYLES[0];
+      const piece = {
+        title: c.title,
+        format: c.format,
+        platform: c.platform,
+        hook: c.hook,
+        ...(job.kind === "video" ? { script_beats: c.script, target_length_seconds: c.duration_seconds } : { slides: c.slides }),
+        caption: c.caption,
+        cta: c.cta,
+        owner_notes: c.feedback || "",
+      };
+      return [
+        job.kind === "video"
+          ? "Turn this approved short-video script into a scene plan for the illustrated reel templates."
+          : `Turn this approved ${c.format === "carousel" ? "carousel" : "single post"} into a slide plan.`,
+        "",
+        `ART STYLE (the image model adds it; don't repeat style words in imagePrompt): ${style.label}`,
+        `RECURRING CHARACTER: ${a.character ? "yes — set withCharacter true where the character appears, and never name or describe it in imagePrompt (the pipeline inserts its description)" : "none — set withCharacter false everywhere"}`,
+        `ACCOUNT LANGUAGE: ${a.language}`,
+        "",
+        "THE PIECE",
+        JSON.stringify(piece, null, 2),
+        "",
+        "Return the scene plan as structured output.",
+      ].join("\n");
+    }
+
+    case "render":
+      return "";
 
     case "from-trend": {
       const t = job.ref_id ? q.trend(job.ref_id) : null;

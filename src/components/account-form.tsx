@@ -1,5 +1,5 @@
 import type { Account } from "@/lib/types";
-import { FORMATS, LANGUAGES, PLATFORMS, TONES, VIDEO_STYLES } from "@/lib/options";
+import { ART_STYLES, FORMATS, LANGUAGES, PLATFORMS, TONES, VIDEO_STYLES } from "@/lib/options";
 import { SubmitButton } from "./client";
 
 const DEFAULT_FORMATS = ["reel", "carousel"];
@@ -61,8 +61,28 @@ export function AccountForm({ account, action, submitLabel }: { account?: Accoun
         <Field label="Tone">
           <Chips name="tones" options={TONES.map((t) => ({ id: t, label: t }))} selected={a?.tones ?? ["Educational"]} />
         </Field>
-        <Field label="Posts per week">
-          <input name="posts_per_week" type="number" min={1} max={21} defaultValue={a?.posts_per_week ?? 5} className="input w-28" />
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field label="Videos per day (Reels / TikToks)">
+            <input name="reels_per_day" type="number" min={0} max={6} defaultValue={a?.reels_per_day ?? 1} className="input w-28" />
+          </Field>
+          <Field label="Feed posts per day (carousels / images)">
+            <input name="posts_per_day" type="number" min={0} max={6} defaultValue={a?.posts_per_day ?? 1} className="input w-28" />
+          </Field>
+        </div>
+      </Group>
+
+      <Group title="Art style and character" hint="How the videos and covers look. Each piece uses one of these styles; the recurring character makes the feed recognisable.">
+        <Field label="Art styles">
+          <Chips name="art_styles" options={ART_STYLES.map((st) => ({ id: st.id, label: st.label }))} selected={a?.art_styles ?? ["ghibli"]} />
+        </Field>
+        <Field label="Recurring character (describe it exactly — it's added to every image prompt)">
+          <textarea
+            name="character"
+            rows={2}
+            defaultValue={a?.character}
+            placeholder="e.g. Pip, a small round paper-white robot with one soft glowing blue eye and a navy knitted scarf"
+            className="input resize-y"
+          />
         </Field>
       </Group>
 

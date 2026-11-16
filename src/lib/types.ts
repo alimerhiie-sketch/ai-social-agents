@@ -27,6 +27,10 @@ export type Account = {
   formats: string[];
   video_styles: string[];
   posts_per_week: number;
+  reels_per_day: number;
+  posts_per_day: number;
+  art_styles: string[];
+  character: string;
   approval_mode: "manual" | "auto";
   brand_colors: string[];
   avoid: string;
@@ -78,6 +82,12 @@ export type ContentItem = {
   cta: string;
   audio: string;
   suggested_day: string;
+  planned_date: string | null;
+  art_style: string;
+  /** scene plan from the Video Producer / Designer */
+  production: { scenes: Record<string, unknown>[]; notes?: string } | null;
+  /** rendered files, relative to the item's media folder */
+  media: { kind: "reel" | "slides"; files: string[]; cover: string; durationSeconds: number; dir: string } | null;
   rationale: string;
   status: ContentStatus;
   feedback: string;
@@ -86,7 +96,7 @@ export type ContentItem = {
 };
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
-export type JobKind = "strategy" | "trends" | "plan" | "from-trend";
+export type JobKind = "strategy" | "trends" | "plan" | "from-trend" | "video" | "design" | "render";
 
 export type Job = {
   id: number;
@@ -95,6 +105,7 @@ export type Job = {
   account_id: number | null;
   ref_id: number | null;
   depends_on: number | null;
+  target_date: string | null;
   status: JobStatus;
   model: string | null;
   summary: string | null;

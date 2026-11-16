@@ -1,0 +1,25 @@
+{
+  "name": "agent-hq-studio",
+  "private": true,
+  "type": "module",
+  "description": "Remotion templates + render pipeline for Agent HQ (Video Producer and Designer agents)",
+  "scripts": {
+    "studio": "remotion studio src/index.ts",
+    "render": "node --experimental-strip-types scripts/render.ts"
+  },
+  "dependencies": {
+    "@remotion/bundler": "^4.0.544",
+    "@remotion/cli": "^4.0.544",
+    "@remotion/google-fonts": "^4.0.544",
+    "@remotion/renderer": "^4.0.544",
+    "kokoro-js": "^1.2.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "remotion": "^4.0.544"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/react": "^19.3.0",
+    "typescript": "^7.0.2"
+  }
+}

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { q } from "@/lib/db";
 import { agentById, JOB_KINDS } from "@/lib/agents/registry";
 import { readLog } from "@/lib/agents/runner";
+import { prettyDate } from "@/lib/dates";
 import { cancelJob } from "../../../actions";
 import { JobWatcher, SubmitButton } from "@/components/client";
 import { duration, JobStatusBadge, PageHeader, TextLink, timeAgo } from "@/components/ui";
@@ -26,7 +27,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
       </div>
       <PageHeader
         eyebrow={`${agent?.name ?? job.agent} · run #${job.id}`}
-        title={`${JOB_KINDS[job.kind]?.label}${account ? ` — ${account.name}` : ""}`}
+        title={`${JOB_KINDS[job.kind]?.label}${job.target_date ? ` · ${prettyDate(job.target_date)}` : ""}${account ? ` — ${account.name}` : ""}`}
         actions={
           (job.status === "running" || job.status === "queued") && (
             <form action={cancelJob.bind(null, job.id)}>

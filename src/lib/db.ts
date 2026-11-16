@@ -114,6 +114,28 @@ function open(): DatabaseSync {
   const d = new DatabaseSync(path.join(DATA_DIR, "hq.db"));
   d.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   d.exec(SCHEMA);
+  // Migrations: which server process owns a running job, and the agent's own process id.
+  // Daily mix per account, and per-day planning (jobs.target_date → content.planned_date).
+  const migrations: [string, string][] = [
+    ["jobs", "runner_pid INTEGER"],
+    ["jobs", "child_pid INTEGER"],
+    ["jobs", "target_date TEXT"],
+    ["accounts", "reels_per_day INTEGER NOT NULL DEFAULT 1"],
+    ["accounts", "posts_per_day INTEGER NOT NULL DEFAULT 0"],
+    ["content", "planned_date TEXT"],
+    ["accounts", "art_styles TEXT NOT NULL DEFAULT '[]'"],
+    ["accounts", "character TEXT NOT NULL DEFAULT ''"],
+    ["content", "art_style TEXT NOT NULL DEFAULT ''"],
+    ["content", "production TEXT"],
+    ["content", "media TEXT"],
+  ];
+  for (const [table, col] of migrations) {
+    try {
+      d.exec(`ALTER TABLE ${table} ADD COLUMN ${col}`);
+    } catch {
+      /* already there */
+    }
+  }
   return d;
 }
 
@@ -134,6 +156,14 @@ const arr = <T = string>(v: unknown): T[] => {
   }
 };
 
+const obj = <T,>(v: unknown): T | null => {
+  try {
+    return v ? (JSON.parse(String(v)) as T) : null;
+  } catch {
+    return null;
+  }
+};
+
 export function toAccount(r: Row): Account {
   let strategy = null;
   try {
@@ -146,6 +176,7 @@ export function toAccount(r: Row): Account {
     formats: arr(r.formats),
     video_styles: arr(r.video_styles),
     brand_colors: arr(r.brand_colors),
+    art_styles: arr(r.art_styles),
     strategy,
   };
 }
@@ -156,6 +187,8 @@ export function toContent(r: Row): ContentItem {
     script: arr(r.script),
     slides: arr(r.slides),
     hashtags: arr(r.hashtags),
+    production: obj(r.production),
+    media: obj(r.media),
   };
 }
 
@@ -199,7 +232,7 @@ export const q = {
       args.push(opts.status);
     }
     const sql = `SELECT * FROM content ${where.length ? "WHERE " + where.join(" AND ") : ""}
-      ORDER BY id DESC LIMIT ${opts.limit ?? 300}`;
+      ORDER BY planned_date IS NULL, planned_date, id LIMIT ${opts.limit ?? 300}`;
     return db.prepare(sql).all(...args).map(toContent);
   },
   contentItem(id: number): ContentItem | null {

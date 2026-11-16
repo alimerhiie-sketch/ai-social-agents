@@ -50,5 +50,7 @@ export const MODELS = [
   { id: "opus", label: "Opus — best quality, heaviest" },
 ];
 
-export const CONTENT_STATUSES = ["scripted", "approved", "producing", "review", "scheduled", "posted", "rejected"] as const;
+export { ART_STYLES } from "../../studio/src/artStyles";
+
+export const CONTENT_STATUSES = ["scripted", "approved", "producing", "review", "ready", "scheduled", "posted", "rejected"] as const;
 export type ContentStatus = (typeof CONTENT_STATUSES)[number];

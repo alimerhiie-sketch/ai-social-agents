@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { q } from "@/lib/db";
 import { FORMATS, VIDEO_STYLES } from "@/lib/options";
 import type { Strategy } from "@/lib/types";
-import { runCycle, runJob } from "../../actions";
+import { runCycle, runJob, runPlanWeek } from "../../actions";
 import { CliBanner, CopyButton, SubmitButton } from "@/components/client";
 import { Badge, Empty, FormatBadge, PageHeader, Section, TextLink, timeAgo } from "@/components/ui";
 
@@ -48,14 +48,20 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
           agent="Strategist"
         />
         <ActionCard title="Find trends" body={`${c.newTrends} unused trends right now. Scans TikTok, Google, Reddit, YouTube and news.`} action={runJob.bind(null, "trends", a.id)} label="Scan now" agent="Trend Scout" />
-        <ActionCard title="Plan the week" body={`Scripts ${a.posts_per_week} posts from the strategy and the freshest trends.`} action={runJob.bind(null, "plan", a.id)} label="Plan week" agent="Strategist" />
+        <ActionCard
+          title="Plan the next 7 days"
+          body={`${a.reels_per_day} video${a.reels_per_day === 1 ? "" : "s"} + ${a.posts_per_day} post${a.posts_per_day === 1 ? "" : "s"} a day, one run per day. Days already planned are skipped.`}
+          action={runPlanWeek.bind(null, a.id)}
+          label="Plan 7 days"
+          agent="Strategist"
+        />
       </div>
 
       <div className="mb-10 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Fact label="Language" value={a.language} />
         <Fact label="Platforms" value={a.platforms.map((p) => (p === "instagram" ? `Instagram${a.ig_handle ? ` @${a.ig_handle}` : ""}` : `TikTok${a.tiktok_handle ? ` @${a.tiktok_handle}` : ""}`)).join(" · ")} />
-        <Fact label="Formats" value={label(FORMATS, a.formats).join(", ") || "—"} />
-        <Fact label="Video styles" value={label(VIDEO_STYLES, a.video_styles).join(", ") || "—"} />
+        <Fact label="Daily output" value={`${a.reels_per_day} video${a.reels_per_day === 1 ? "" : "s"} + ${a.posts_per_day} post${a.posts_per_day === 1 ? "" : "s"} · ${7 * (a.reels_per_day + a.posts_per_day)}/week`} />
+        <Fact label="Formats · styles" value={[...label(FORMATS, a.formats), ...label(VIDEO_STYLES, a.video_styles)].join(", ") || "—"} />
       </div>
 
       {a.strategy ? <StrategyView s={a.strategy} /> : (

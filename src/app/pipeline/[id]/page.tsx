@@ -1,9 +1,13 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import { q } from "@/lib/db";
-import { VIDEO_STYLES } from "@/lib/options";
-import { deleteContent, setContentStatus, updateContentText } from "../../actions";
+import { db, q } from "@/lib/db";
+import { ART_STYLES, VIDEO_STYLES } from "@/lib/options";
+import type { ContentItem, Job } from "@/lib/types";
+import { JOB_KINDS } from "@/lib/agents/registry";
+import { prettyDate } from "@/lib/dates";
+import { deleteContent, produce, redoProduction, setContentStatus, updateContentText } from "../../actions";
 import { CopyButton, SubmitButton } from "@/components/client";
-import { Badge, FormatBadge, PageHeader, PlatformBadge, TextLink } from "@/components/ui";
+import { Badge, FormatBadge, JobStatusBadge, PageHeader, PlatformBadge, TextLink } from "@/components/ui";
 
 export default async function ContentDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -14,6 +18,10 @@ export default async function ContentDetail({ params }: { params: Promise<{ id: 
   const style = VIDEO_STYLES.find((v) => v.id === it.video_style)?.label ?? it.video_style;
   const total = it.script.reduce((s, b) => s + (Number(b.seconds) || 0), 0);
   const fullCaption = `${it.caption}\n\n${it.hashtags.map((h) => `#${h}`).join(" ")}`;
+  const lastJob = db
+    .prepare("SELECT * FROM jobs WHERE ref_id = ? AND kind IN ('video','design','render') ORDER BY id DESC LIMIT 1")
+    .get(it.id) as Job | undefined;
+  const artStyle = ART_STYLES.find((s) => s.id === (it.art_style || account?.art_styles[0]));
 
   return (
     <>
@@ -31,7 +39,8 @@ export default async function ContentDetail({ params }: { params: Promise<{ id: 
           {style && <Badge>{style}</Badge>}
           {it.duration_seconds > 0 && <Badge>{it.duration_seconds}s</Badge>}
           {it.pillar && <Badge>{it.pillar}</Badge>}
-          {it.suggested_day && <Badge>{it.suggested_day}</Badge>}
+          {it.planned_date ? <Badge>{prettyDate(it.planned_date)}</Badge> : it.suggested_day && <Badge>{it.suggested_day}</Badge>}
+          {artStyle && <Badge tone="info">{artStyle.label}</Badge>}
           <Badge tone={it.status === "approved" ? "good" : it.status === "rejected" ? "bad" : "accent"}>{it.status}</Badge>
         </span>
       </PageHeader>
@@ -44,6 +53,7 @@ export default async function ContentDetail({ params }: { params: Promise<{ id: 
 
       <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-6">
+          {["approved", "producing", "review", "ready"].includes(it.status) && <Production it={it} lastJob={lastJob ? { ...lastJob } : null} />}
           <div className="panel p-6">
             <div className="eyebrow mb-2">Hook</div>
             <p className="text-xl font-medium leading-snug tracking-[-0.01em]">{it.hook}</p>
@@ -145,12 +155,6 @@ export default async function ContentDetail({ params }: { params: Promise<{ id: 
             </form>
           </details>
 
-          <div className="rounded-xl border border-dashed border-line-2 p-5">
-            <div className="text-[13px] font-medium text-muted">Produce</div>
-            <p className="mt-1 text-xs leading-relaxed text-dim">
-              Phase 2: approved scripts go to the {it.format === "reel" ? "Video Producer (Remotion render + local voiceover)" : "Designer (Remotion stills)"}.
-            </p>
-          </div>
 
           <form action={deleteContent.bind(null, it.id)}>
             <SubmitButton className="btn btn-ghost btn-sm text-dim" pending="Deleting…">
@@ -186,9 +190,124 @@ function StatusActions({ id, status }: { id: number; status: string }) {
         </details>
       </>
     );
+  if (status === "review")
+    return (
+      <form action={setContentStatus.bind(null, id, "ready")}>
+        <SubmitButton className="btn btn-primary" pending="Approving…">
+          Approve for posting
+        </SubmitButton>
+      </form>
+    );
+  if (status === "ready")
+    return (
+      <>
+        <Badge tone="good">Ready to post</Badge>
+        <form action={setContentStatus.bind(null, id, "review")}>
+          <SubmitButton className="btn btn-ghost">Back to review</SubmitButton>
+        </form>
+      </>
+    );
+  if (status === "producing") return null;
   return (
     <form action={setContentStatus.bind(null, id, "scripted")}>
       <SubmitButton className="btn btn-ghost">Move back to review</SubmitButton>
     </form>
   );
 }
+
+function Production({ it, lastJob }: { it: ContentItem; lastJob: Job | null }) {
+  const m = it.media;
+  const src = (f: string) => `/api/media/${m!.dir}/${f}`;
+  return (
+    <div className="panel overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3">
+        <div className="eyebrow">Production</div>
+        {lastJob && (
+          <Link href={`/agents/jobs/${lastJob.id}`} className="flex items-center gap-2 text-xs text-muted hover:text-fg">
+            <JobStatusBadge status={lastJob.status} />
+            {JOB_KINDS[lastJob.kind]?.label} · run #{lastJob.id}
+          </Link>
+        )}
+      </div>
+
+      {it.status === "approved" && (
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[13px] leading-relaxed text-muted">
+            {it.format === "reel"
+              ? "The Video Producer plans illustrated scenes, then the renderer paints them, records the voiceover and renders the MP4."
+              : "The Designer plans the slides, then the renderer paints the cover and renders every slide as a JPEG."}
+            {lastJob?.status === "failed" && <span className="mt-2 block text-bad">Last attempt failed: {lastJob.error}</span>}
+          </p>
+          <form action={produce.bind(null, it.id)}>
+            <SubmitButton className="btn btn-primary" pending="Queuing…">
+              {it.production ? "Render again" : "Produce"}
+            </SubmitButton>
+          </form>
+        </div>
+      )}
+
+      {it.status === "producing" && (
+        <div className="flex items-center gap-3 p-5 text-[13px] text-muted">
+          <span className="live-dot size-2 rounded-full bg-accent" />
+          In production. Watch it live in the run log; this page refreshes when it finishes.
+        </div>
+      )}
+
+      {m && (it.status === "review" || it.status === "ready") && (
+        <div className="p-5">
+          {m.kind === "reel" ? (
+            <div className="flex flex-col gap-5 md:flex-row">
+              <video
+                src={src(m.files[0])}
+                poster={m.cover ? src(m.cover) : undefined}
+                controls
+                playsInline
+                className="aspect-[9/16] w-full max-w-[300px] rounded-lg border border-line bg-black"
+              />
+              <ProductionActions it={it} downloads={[{ label: "Download MP4", href: `${src(m.files[0])}?download` }]} />
+            </div>
+          ) : (
+            <div className="space-y-5">
+              <div className="flex gap-3 overflow-x-auto pb-2">
+                {m.files.map((f) => (
+                  <a key={f} href={src(f)} target="_blank" rel="noreferrer" className="shrink-0">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={src(f)} alt="" className="aspect-[4/5] w-48 rounded-lg border border-line object-cover" />
+                  </a>
+                ))}
+              </div>
+              <ProductionActions it={it} downloads={m.files.map((f, i) => ({ label: `Slide ${i + 1}`, href: `${src(f)}?download` }))} />
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ProductionActions({ it, downloads }: { it: ContentItem; downloads: { label: string; href: string }[] }) {
+  return (
+    <div className="flex flex-1 flex-col gap-4">
+      {it.production?.notes && <p className="text-[13px] leading-relaxed text-muted">{it.production.notes}</p>}
+      <div className="flex flex-wrap gap-2">
+        {downloads.map((d) => (
+          <a key={d.href} href={d.href} className="btn btn-sm">
+            {d.label}
+          </a>
+        ))}
+      </div>
+      <form action={produce.bind(null, it.id)}>
+        <SubmitButton className="btn btn-sm btn-ghost" pending="Queuing…">
+          Re-render (same plan)
+        </SubmitButton>
+      </form>
+      <form action={redoProduction.bind(null, it.id)} className="space-y-2">
+        <textarea name="feedback" rows={2} placeholder="What should change? e.g. warmer scenes, character in every shot, slower…" className="input text-[13px]" />
+        <SubmitButton className="btn btn-sm" pending="Queuing…">
+          Redo with new images
+        </SubmitButton>
+      </form>
+    </div>
+  );
+}
+

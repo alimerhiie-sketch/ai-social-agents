@@ -6,6 +6,7 @@ import { MODELS } from "@/lib/options";
 import { cancelJob, setAgentModel } from "../actions";
 import { CliBanner, SubmitButton } from "@/components/client";
 import { Badge, duration, JobStatusBadge, PageHeader, Section, timeAgo } from "@/components/ui";
+import { prettyDate } from "@/lib/dates";
 
 export default function Agents() {
   const jobs = q.jobs({ limit: 60 });
@@ -34,18 +35,10 @@ export default function Agents() {
                 {ag.tools.length > 0 && <p className="mt-1 text-[11px] text-dim">Tools: {ag.tools.join(", ")}</p>}
               </div>
               {ag.status === "active" && (
-                <form action={setAgentModel.bind(null, ag.id)} className="flex items-center gap-2">
-                  <select name="model" defaultValue={modelFor(ag.id)} className="input h-9 w-auto py-0 text-[13px]">
-                    {MODELS.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                  <SubmitButton className="btn btn-sm" pending="…">
-                    Save
-                  </SubmitButton>
-                </form>
+                <div className="flex flex-col gap-2">
+                  <ModelPicker settingKey={`model:${ag.id}`} current={modelFor(ag.id)} label={ag.id === "strategist" ? "Strategy" : undefined} />
+                  {ag.id === "strategist" && <ModelPicker settingKey={`model:${ag.id}:scripts`} current={modelFor(ag.id, "plan")} label="Daily scripts" />}
+                </div>
               )}
             </div>
           ))}
@@ -85,6 +78,7 @@ export default function Agents() {
                     <td className="px-4 py-3">
                       <Link href={`/agents/jobs/${j.id}`} className="text-fg hover:text-accent">
                         {JOB_KINDS[j.kind]?.label}
+                        {j.target_date && <span className="text-muted"> · {prettyDate(j.target_date)}</span>}
                       </Link>
                     </td>
                     <td className="px-4 py-3 text-muted">{j.account_id ? names.get(j.account_id) : "—"}</td>
@@ -111,5 +105,23 @@ export default function Agents() {
         )}
       </Section>
     </>
+  );
+}
+
+function ModelPicker({ settingKey, current, label }: { settingKey: string; current: string; label?: string }) {
+  return (
+    <form action={setAgentModel.bind(null, settingKey)} className="flex items-center gap-2">
+      {label && <span className="w-24 text-right text-xs text-dim">{label}</span>}
+      <select name="model" defaultValue={current} className="input h-9 w-auto py-0 text-[13px]">
+        {MODELS.map((m) => (
+          <option key={m.id} value={m.id}>
+            {m.label}
+          </option>
+        ))}
+      </select>
+      <SubmitButton className="btn btn-sm" pending="…">
+        Save
+      </SubmitButton>
+    </form>
   );
 }

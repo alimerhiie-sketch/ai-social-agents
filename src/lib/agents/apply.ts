@@ -1,5 +1,6 @@
 import { db, q } from "../db";
 import type { Job, Strategy } from "../types";
+import { prettyDate, weekdayShort } from "../dates";
 
 // Writes an agent's structured output into the database. Returns a one-line summary.
 
@@ -34,12 +35,23 @@ type ItemOut = {
   cta: string;
   audio: string;
   suggested_day: string;
+  art_style?: string;
   rationale: string;
 };
 
 export function applyResult(job: Job, data: unknown): string {
   const accountId = job.account_id!;
   switch (job.kind) {
+    case "video":
+    case "design": {
+      const plan = data as { notes: string; scenes: { type: string }[] };
+      if (!Array.isArray(plan?.scenes) || !plan.scenes.length) throw new Error("The plan has no scenes");
+      db.prepare("UPDATE content SET production = ?, updated_at = datetime('now') WHERE id = ?").run(JSON.stringify(plan), job.ref_id);
+      const painted = plan.scenes.filter((s) => s.type === "illustration").length;
+      return `${plan.scenes.length} ${job.kind === "video" ? "scenes" : "slides"} planned (${painted} illustrated) — rendering next`;
+    }
+    case "render":
+      return "Rendered";
     case "strategy": {
       const s = data as Strategy;
       if (!s?.pillars) throw new Error("Strategy output is missing pillars");
@@ -80,8 +92,8 @@ export function applyResult(job: Job, data: unknown): string {
       };
       const ins = db.prepare(
         `INSERT INTO content (account_id, trend_id, job_id, title, pillar, platform, format, video_style, duration_seconds,
-          hook, script, slides, caption, hashtags, cta, audio, suggested_day, rationale, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scripted')`,
+          hook, script, slides, caption, hashtags, cta, audio, suggested_day, planned_date, art_style, rationale, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scripted')`,
       );
       const markUsed = db.prepare("UPDATE trends SET status = 'used' WHERE id = ?");
       for (const it of out.items) {
@@ -90,11 +102,13 @@ export function applyResult(job: Job, data: unknown): string {
           accountId, trendId, job.id, it.title, it.pillar, it.platform, it.format, it.video_style,
           Math.round(it.duration_seconds || 0), it.hook, JSON.stringify(it.script ?? []), JSON.stringify(it.slides ?? []),
           it.caption, JSON.stringify((it.hashtags ?? []).map((h) => h.replace(/^#/, ""))), it.cta, it.audio,
-          it.suggested_day, it.rationale,
+          job.target_date ? weekdayShort(job.target_date) : it.suggested_day, job.target_date ?? null, it.art_style ?? "", it.rationale,
         );
         if (trendId) markUsed.run(trendId);
       }
-      return `${out.items.length} piece${out.items.length === 1 ? "" : "s"} scripted and waiting for your approval`;
+      const reels = out.items.filter((i) => i.format === "reel").length;
+      const when = job.target_date ? ` for ${prettyDate(job.target_date)}` : "";
+      return `${out.items.length} piece${out.items.length === 1 ? "" : "s"} scripted${when} (${reels} video${reels === 1 ? "" : "s"}, ${out.items.length - reels} post${out.items.length - reels === 1 ? "" : "s"}) — waiting for your approval`;
     }
   }
 }

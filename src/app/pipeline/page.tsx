@@ -2,13 +2,17 @@ import Link from "next/link";
 import { q } from "@/lib/db";
 import type { ContentItem } from "@/lib/types";
 import { AccountFilter } from "@/components/account-filter";
+import { SubmitButton } from "@/components/client";
+import { produceAllApproved } from "../actions";
 import { Badge, FormatBadge, PageHeader, PlatformBadge } from "@/components/ui";
+import { prettyDate } from "@/lib/dates";
 
 const COLUMNS: { status: string; title: string; hint: string; phase?: number }[] = [
   { status: "scripted", title: "To review", hint: "Scripts waiting for you" },
   { status: "approved", title: "Approved", hint: "Ready for production" },
-  { status: "producing", title: "Producing", hint: "Designer & Video Producer", phase: 2 },
-  { status: "scheduled", title: "Scheduled", hint: "Publisher queue", phase: 3 },
+  { status: "producing", title: "Producing", hint: "Painting, voicing, rendering" },
+  { status: "review", title: "Final review", hint: "Watch it, then approve" },
+  { status: "ready", title: "Ready to post", hint: "Publisher arrives in Phase 3" },
   { status: "posted", title: "Posted", hint: "Live + analytics", phase: 3 },
 ];
 
@@ -27,12 +31,21 @@ export default async function Pipeline({ searchParams }: { searchParams: Promise
         back to the Strategist so the next batch gets better.
       </PageHeader>
 
-      <AccountFilter accounts={accounts} current={accountId} base="/pipeline" />
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <AccountFilter accounts={accounts} current={accountId} base="/pipeline" />
+        {items.some((i) => i.status === "approved") && (
+          <form action={produceAllApproved.bind(null, accountId)} className="mb-6">
+            <SubmitButton className="btn btn-primary btn-sm" pending="Queuing…">
+              Produce all approved ({items.filter((i) => i.status === "approved").length})
+            </SubmitButton>
+          </form>
+        )}
+      </div>
 
       <div className="-mx-4 overflow-x-auto px-4 pb-4 sm:mx-0 sm:px-0">
-        <div className="grid min-w-[1000px] grid-cols-5 gap-3">
+        <div className="grid min-w-[1180px] grid-cols-6 gap-3">
           {COLUMNS.map((col) => {
-            const list = items.filter((i) => i.status === col.status || (col.status === "producing" && i.status === "review"));
+            const list = items.filter((i) => i.status === col.status || (col.status === "posted" && i.status === "scheduled"));
             return (
               <div key={col.status} className={`flex flex-col rounded-xl border border-line ${col.phase ? "bg-transparent" : "bg-panel/60"}`}>
                 <div className="flex items-baseline justify-between gap-2 border-b border-line px-3.5 py-3">
@@ -74,11 +87,15 @@ function Card({ it, account }: { it: ContentItem; account: string | null }) {
       <div className="flex flex-wrap items-center gap-1">
         <FormatBadge format={it.format} />
         <PlatformBadge platform={it.platform} />
-        {it.suggested_day && <Badge>{it.suggested_day}</Badge>}
+        {it.planned_date ? <Badge>{prettyDate(it.planned_date)}</Badge> : it.suggested_day && <Badge>{it.suggested_day}</Badge>}
         {it.trend_id && <Badge tone="accent">trend</Badge>}
       </div>
       <div className="mt-2 text-[13px] font-medium leading-snug text-fg group-hover:text-accent">{it.title}</div>
       <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-dim">&ldquo;{it.hook}&rdquo;</div>
+      {it.media?.cover && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={`/api/media/${it.media.dir}/${it.media.cover}`} alt="" className="mt-2 aspect-[4/5] w-full rounded-md object-cover" />
+      )}
       {account && <div className="mt-2 text-[11px] text-dim">{account}</div>}
     </Link>
   );

@@ -91,6 +91,7 @@ const contentItem = obj({
     obj({ heading: str(), body: str(), visual: str() }),
     "Carousel slides or the single post/story design. Empty array for videos.",
   ),
+  art_style: str("One of the account's allowed art style ids, the look for this piece"),
   caption: str("Full caption without hashtags"),
   hashtags: strs("3–5 hashtags without the # sign"),
   cta: str(),
@@ -102,4 +103,28 @@ const contentItem = obj({
 export const planSchema = obj({
   notes: str("One or two sentences on how this batch balances pillars, trends and formats."),
   items: list(contentItem),
+});
+
+const scene = obj({
+  type: en(["illustration", "hook", "statement", "list", "steps", "stat", "compare", "verdict", "cta"]),
+  kicker: str(),
+  headline: str(),
+  subline: str(),
+  items: strs(),
+  number: str(),
+  numberLabel: str(),
+  left: obj({ label: str(), value: str() }),
+  right: obj({ label: str(), value: str() }),
+  score: int(),
+  scoreMax: int(),
+  voiceover: str(),
+  seconds: num(),
+  imagePrompt: str("illustration only: what the picture shows, no style words, never the character's name"),
+  withCharacter: { type: "boolean" },
+  camera: en(["push-in", "pull-out", "pan-left", "pan-right", "rise", "drift"]),
+});
+
+export const scenePlanSchema = obj({
+  notes: str("One sentence on the visual story / metaphor running through the piece"),
+  scenes: list(scene),
 });
