@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "hq:build": "next build",
+    "hq": "next start -p 3210"
   },
   "dependencies": {
     "next": "16.4.6",

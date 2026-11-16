@@ -10,6 +10,7 @@ export async function GET() {
     status: j.status,
     verb: JOB_KINDS[j.kind]?.verb ?? j.kind,
     account: j.account_id ? q.account(j.account_id)?.name : null,
+    notBefore: j.not_before ?? null,
   }));
   return Response.json({ jobs });
 }

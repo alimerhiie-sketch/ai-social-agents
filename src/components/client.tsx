@@ -29,7 +29,7 @@ export function NavLink({ href, children }: { href: string; children: ReactNode 
   );
 }
 
-type Active = { id: number; status: string; verb: string; account: string | null };
+type Active = { id: number; status: string; verb: string; account: string | null; notBefore: string | null };
 
 export function LiveIndicator() {
   const [jobs, setJobs] = useState<Active[]>([]);
@@ -58,6 +58,19 @@ export function LiveIndicator() {
 
   const running = jobs.find((j) => j.status === "running");
   const queued = jobs.filter((j) => j.status === "queued").length;
+  const waits = jobs.filter((j) => j.notBefore && new Date(j.notBefore) > new Date());
+  if (!running && waits.length === jobs.length && jobs.length) {
+    const at = new Date(Math.min(...waits.map((j) => new Date(j.notBefore!).getTime())));
+    return (
+      <Link href="/agents" className="block rounded-lg border border-line bg-panel px-3 py-2.5 transition-colors hover:border-line-2">
+        <div className="flex items-center gap-2 text-xs text-warn">
+          <span className="size-1.5 rounded-full bg-warn" />
+          Paused until {at.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+        </div>
+        <div className="mt-1 text-[11px] text-dim">{jobs.length} waiting for the free image quota</div>
+      </Link>
+    );
+  }
   if (!jobs.length)
     return (
       <div className="flex items-center gap-2 px-2.5 text-xs text-dim">
