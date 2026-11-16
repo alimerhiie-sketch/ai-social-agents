@@ -106,6 +106,7 @@ export type Job = {
   ref_id: number | null;
   depends_on: number | null;
   target_date: string | null;
+  not_before?: string | null;
   status: JobStatus;
   model: string | null;
   summary: string | null;

@@ -249,7 +249,9 @@ function Production({ it, lastJob }: { it: ContentItem; lastJob: Job | null }) {
       {it.status === "producing" && (
         <div className="flex items-center gap-3 p-5 text-[13px] text-muted">
           <span className="live-dot size-2 rounded-full bg-accent" />
-          In production. Watch it live in the run log; this page refreshes when it finishes.
+          {lastJob?.status === "queued" && lastJob.not_before
+            ? `Paused: today's free image quota is used up. It continues automatically at ${new Date(lastJob.not_before).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}.`
+            : "In production. Watch it live in the run log; this page refreshes when it finishes."}
         </div>
       )}
 

@@ -127,7 +127,8 @@ async function renderReel(serveUrl) {
       } else {
         say(`Painting ${n}/${painted.length} (${style.label}): ${String(s.imagePrompt).slice(0, 70)}…`);
         const t0 = Date.now();
-        const r = await generateImage({ prompt: imagePrompt(s.imagePrompt || s.headline || "", style, s.withCharacter ? spec.character : null), seed, out }); // one seed per video keeps the character and palette consistent
+        // one seed per video, plus the character reference, keep the character and palette consistent
+        const r = await generateImage({ prompt: imagePrompt(s.imagePrompt || s.headline || "", style, s.withCharacter ? spec.character : null), seed, out, reference: s.withCharacter ? spec.characterRefReady : undefined });
         say(`  ↳ ${r.provider} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
       }
       images[i] = `http://127.0.0.1:${port}/${file}`;
@@ -198,7 +199,7 @@ async function renderSlides(serveUrl) {
       const out = path.join(spec.outDir, file);
       if (!(fs.existsSync(out) && fs.statSync(out).size > 10_000)) {
         say(`Painting slide ${i + 1} (${style.label}): ${String(scene.imagePrompt).slice(0, 70)}…`);
-        const r = await generateImage({ prompt: imagePrompt(scene.imagePrompt || scene.headline || "", style, scene.withCharacter ? spec.character : null), seed, out, aspect: "feed" });
+        const r = await generateImage({ prompt: imagePrompt(scene.imagePrompt || scene.headline || "", style, scene.withCharacter ? spec.character : null), seed, out, aspect: "feed", reference: scene.withCharacter ? spec.characterRefReady : undefined });
         say(`  ↳ ${r.provider}`);
       }
       scene.imageSrc = `http://127.0.0.1:${port}/${file}`;
@@ -217,13 +218,35 @@ async function renderSlides(serveUrl) {
   return { kind: "slides", files, cover: files[0], durationSeconds: 0 };
 }
 
+// ---------- recurring character: one reference image per account, reused by every scene ----------
+async function ensureCharacterRef() {
+  const ref = spec.characterRef;
+  if (!spec.character || !ref) return null;
+  if (fs.existsSync(ref) && fs.statSync(ref).size > 10_000) return ref;
+  fs.mkdirSync(path.dirname(ref), { recursive: true });
+  say("Painting the character reference (once per account)…");
+  const prompt = `Character reference sheet: ${spec.character}. Full body, standing, three-quarter view, friendly neutral pose, centred, plain soft pale background, clean illustration, consistent proportions. No text, no letters.`;
+  const r = await generateImage({ prompt, seed: 1234, out: ref, aspect: "feed" });
+  say(`  ↳ ${r.provider}`);
+  return ref;
+}
+
+/** Next free-tier reset (00:00 UTC) plus a few minutes of margin. */
+function nextReset() {
+  const d = new Date();
+  d.setUTCHours(24, 5, 0, 0);
+  return d.toISOString();
+}
+
 try {
+  spec.characterRefReady = await ensureCharacterRef();
   const serveUrl = await getServeUrl();
   const result = spec.kind === "reel" ? await renderReel(serveUrl) : await renderSlides(serveUrl);
   console.log(`RESULT ${JSON.stringify(result)}`);
   process.exit(0);
 } catch (e) {
   console.error(e?.stack || String(e));
-  console.log(`RESULT ${JSON.stringify({ error: String(e?.message || e) })}`);
+  const quota = !!e?.quota;
+  console.log(`RESULT ${JSON.stringify({ error: String(e?.message || e), quota, retryAt: quota ? nextReset() : undefined })}`);
   process.exit(1);
 }

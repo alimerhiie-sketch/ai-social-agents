@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR, db, LOG_DIR, q } from "../db";
@@ -69,6 +70,8 @@ function reapOrphans() {
 if (!state.booted) {
   state.booted = true;
   setTimeout(kick, 500);
+  // Paused jobs (e.g. waiting for the free image quota to reset) start on their own.
+  setInterval(kick, 60_000);
 }
 
 export const logPath = (jobId: number) => path.join(LOG_DIR, `job-${jobId}.log`);
@@ -85,14 +88,14 @@ export function modelFor(agentId: string, kind?: JobKind): string {
 export function enqueue(
   kind: JobKind,
   accountId: number,
-  opts: { refId?: number; dependsOn?: number; targetDate?: string } = {},
+  opts: { refId?: number; dependsOn?: number; targetDate?: string; notBefore?: string } = {},
 ): number {
   const agent = JOB_KINDS[kind].agent;
   const r = db
     .prepare(
-      "INSERT INTO jobs (kind, agent, account_id, ref_id, depends_on, target_date, status) VALUES (?, ?, ?, ?, ?, ?, 'queued')",
+      "INSERT INTO jobs (kind, agent, account_id, ref_id, depends_on, target_date, not_before, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'queued')",
     )
-    .run(kind, agent, accountId, opts.refId ?? null, opts.dependsOn ?? null, opts.targetDate ?? null);
+    .run(kind, agent, accountId, opts.refId ?? null, opts.dependsOn ?? null, opts.targetDate ?? null, opts.notBefore ?? null);
   const id = Number(r.lastInsertRowid);
   log(
     id,
@@ -182,7 +185,10 @@ export function kick() {
   const runningNow = (db.prepare("SELECT COUNT(*) n FROM jobs WHERE status = 'running'").get() as { n: number }).n;
   if (runningNow >= MAX_CONCURRENT) return;
   const queued = db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY id").all() as unknown as Job[];
+  const now = new Date().toISOString();
   for (const job of queued) {
+    const nb = (job as Job & { not_before?: string | null }).not_before;
+    if (nb && nb > now) continue;
     if (job.depends_on) {
       const dep = q.job(job.depends_on);
       if (!dep || dep.status === "failed" || dep.status === "cancelled") {
@@ -406,7 +412,10 @@ function startRender(job: Job) {
     return finish("failed", null, "Nothing to render: the piece has no scene plan", started);
   }
 
-  const rel = `content-${c.id}/v${job.id}`;
+  // One folder per scene plan + style: a retry or re-render reuses images that are already painted.
+  const planHash = crypto.createHash("sha1").update(JSON.stringify(c.production) + (c.art_style || "")).digest("hex").slice(0, 10);
+  const rel = `content-${c.id}/${planHash}`;
+  const charHash = a.character ? crypto.createHash("sha1").update(a.character).digest("hex").slice(0, 8) : "";
   const outDir = path.join(MEDIA_DIR, rel);
   fs.mkdirSync(outDir, { recursive: true });
   const spec = {
@@ -420,6 +429,7 @@ function startRender(job: Job) {
     showCaptions: true,
     artStyle: c.art_style || a.art_styles[0] || "ghibli",
     character: a.character || null,
+    characterRef: a.character ? path.join(MEDIA_DIR, `account-${a.id}`, `character-${charHash}.jpg`) : null,
     seed: c.id * 7919,
     scenes: c.production.scenes,
   };
@@ -465,6 +475,15 @@ function startRender(job: Job) {
       const summary = `Rendered ${what} — waiting for your final review`;
       log(job.id, `✓ ${summary}`);
       return finish("done", summary, null, started);
+    }
+    if (result?.quota) {
+      // Free image quota used up: park this render until the reset instead of failing the piece.
+      const retryAt = String(result.retryAt);
+      const when = new Date(retryAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+      const next = enqueue("render", c.account_id, { refId: c.id, notBefore: retryAt });
+      const note = `Paused: the free image quota for today is used up. Retrying automatically at ${when} as run #${next}.`;
+      log(job.id, `⏸ ${note}`);
+      return finish("failed", null, note, started);
     }
     const msg = String(result?.error ?? errTail.trim().split("\n").filter((l) => !/Version mismatch|zod|remotion\.dev|-{5}|To resolve|breakages|^\s*-|^\s*$/.test(l)).slice(-3).join(" ") ?? "Render failed");
     log(job.id, `✗ ${msg}`);

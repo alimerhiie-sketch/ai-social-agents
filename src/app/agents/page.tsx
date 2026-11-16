@@ -83,7 +83,9 @@ export default function Agents() {
                     </td>
                     <td className="px-4 py-3 text-muted">{j.account_id ? names.get(j.account_id) : "—"}</td>
                     <td className="max-w-[280px] truncate px-4 py-3 text-muted" title={j.summary ?? j.error ?? ""}>
-                      {j.summary ?? (j.error ? <span className="text-bad">{j.error}</span> : "—")}
+                      {j.status === "queued" && j.not_before
+                        ? `Waits until ${new Date(j.not_before).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+                        : (j.summary ?? (j.error ? <span className={j.error.startsWith("Paused") ? "text-warn" : "text-bad"}>{j.error}</span> : "—"))}
                     </td>
                     <td className="px-4 py-3 text-muted">{j.model ?? "—"}</td>
                     <td className="px-4 py-3 font-mono text-xs text-muted">{duration(j.duration_ms)}</td>

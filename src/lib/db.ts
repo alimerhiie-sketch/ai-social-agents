@@ -128,6 +128,7 @@ function open(): DatabaseSync {
     ["content", "art_style TEXT NOT NULL DEFAULT ''"],
     ["content", "production TEXT"],
     ["content", "media TEXT"],
+    ["jobs", "not_before TEXT"],
   ];
   for (const [table, col] of migrations) {
     try {
