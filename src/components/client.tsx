@@ -198,8 +198,22 @@ export function CopyButton({ text }: { text: string }) {
     <button
       type="button"
       className="btn btn-ghost btn-sm"
-      onClick={() => {
-        navigator.clipboard.writeText(text);
+      onClick={async () => {
+        // The Clipboard API only exists on https/localhost; on the Wi-Fi address (http://192.168…) use the old way.
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          const t = document.createElement("textarea");
+          t.value = text;
+          t.setAttribute("readonly", "");
+          t.style.position = "fixed";
+          t.style.opacity = "0";
+          document.body.appendChild(t);
+          t.select();
+          t.setSelectionRange(0, text.length);
+          document.execCommand("copy");
+          t.remove();
+        }
         setDone(true);
         setTimeout(() => setDone(false), 1400);
       }}

@@ -31,6 +31,11 @@ export type Account = {
   posts_per_day: number;
   art_styles: string[];
   character: string;
+  /** local times, comma separated, e.g. "13:00, 20:00" */
+  reel_times: string;
+  post_times: string;
+  /** line added to every caption; "" to turn off */
+  ai_disclosure: string;
   approval_mode: "manual" | "auto";
   brand_colors: string[];
   avoid: string;
@@ -96,7 +101,32 @@ export type ContentItem = {
 };
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
-export type JobKind = "strategy" | "trends" | "plan" | "from-trend" | "video" | "design" | "render";
+export type JobKind = "strategy" | "trends" | "plan" | "from-trend" | "video" | "design" | "render" | "publish";
+
+export type Post = {
+  id: number;
+  content_id: number;
+  account_id: number;
+  platform: "instagram" | "tiktok";
+  method: "api" | "phone";
+  status: "scheduled" | "publishing" | "posted" | "failed" | "cancelled";
+  scheduled_at: string;
+  posted_at: string | null;
+  remote_id: string | null;
+  permalink: string | null;
+  error: string | null;
+  created_at: string;
+};
+
+export type Connection = {
+  account_id: number;
+  platform: string;
+  remote_user_id: string;
+  username: string;
+  token: string;
+  expires_at: string | null;
+  refreshed_at: string | null;
+};
 
 export type Job = {
   id: number;

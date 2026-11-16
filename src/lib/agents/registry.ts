@@ -61,9 +61,9 @@ export const AGENTS: AgentDef[] = [
   {
     id: "publisher",
     name: "Publisher",
-    role: "Posts to Instagram via the official API and hands TikTok posts to your phone, with AI labels set.",
+    role: "Posts to Instagram on schedule through the official API, and queues TikTok posts on your phone page with the caption ready to copy.",
     phase: 3,
-    status: "planned",
+    status: "basic",
     defaultModel: "haiku",
     tools: [],
   },
@@ -88,4 +88,5 @@ export const JOB_KINDS: Record<JobKind, { agent: string; label: string; verb: st
   video: { agent: "video-producer", label: "Plan the video", verb: "Planning the video" },
   design: { agent: "designer", label: "Plan the slides", verb: "Planning the slides" },
   render: { agent: "renderer", label: "Render", verb: "Painting and rendering" },
+  publish: { agent: "publisher", label: "Post to Instagram", verb: "Posting to Instagram" },
 };

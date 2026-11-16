@@ -184,6 +184,7 @@ export function buildPrompt(job: Job): string {
     }
 
     case "render":
+    case "publish":
       return "";
 
     case "from-trend": {

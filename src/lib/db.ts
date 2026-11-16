@@ -2,7 +2,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import type { Account, ContentItem, Job, Trend } from "./types";
+import type { Account, Connection, ContentItem, Job, Post, Trend } from "./types";
 
 // Data lives outside the OneDrive-synced Documents folder: OneDrive holds handles on
 // freshly written files, which is poison for a live SQLite database.
@@ -99,6 +99,34 @@ CREATE TABLE IF NOT EXISTS jobs (
   finished_at TEXT
 );
 
+-- One row per platform a piece goes to: Instagram is posted by the API, TikTok handed to your phone.
+CREATE TABLE IF NOT EXISTS posts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  content_id INTEGER NOT NULL REFERENCES content(id) ON DELETE CASCADE,
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  method TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'scheduled',
+  scheduled_at TEXT NOT NULL,
+  posted_at TEXT,
+  remote_id TEXT,
+  permalink TEXT,
+  error TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Platform logins per account (tokens stay on this PC).
+CREATE TABLE IF NOT EXISTS connections (
+  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+  platform TEXT NOT NULL,
+  remote_user_id TEXT NOT NULL,
+  username TEXT NOT NULL DEFAULT '',
+  token TEXT NOT NULL,
+  expires_at TEXT,
+  refreshed_at TEXT,
+  PRIMARY KEY (account_id, platform)
+);
+
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -107,6 +135,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE INDEX IF NOT EXISTS idx_trends_account ON trends(account_id, status);
 CREATE INDEX IF NOT EXISTS idx_content_account ON content(account_id, status);
 CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_posts_when ON posts(status, scheduled_at);
 `;
 
 function open(): DatabaseSync {
@@ -129,6 +158,9 @@ function open(): DatabaseSync {
     ["content", "production TEXT"],
     ["content", "media TEXT"],
     ["jobs", "not_before TEXT"],
+    ["accounts", "reel_times TEXT NOT NULL DEFAULT '13:00, 20:00'"],
+    ["accounts", "post_times TEXT NOT NULL DEFAULT '09:30, 17:30'"],
+    ["accounts", "ai_disclosure TEXT NOT NULL DEFAULT 'Illustrated with AI.'"],
   ];
   for (const [table, col] of migrations) {
     try {
@@ -264,6 +296,32 @@ export const q = {
     db.prepare(
       "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     ).run(key, value);
+  },
+  posts(opts: { accountId?: number; from?: string; to?: string; statuses?: string[]; method?: string } = {}): Post[] {
+    const where: string[] = [];
+    const args: (string | number)[] = [];
+    const add = (clause: string, ...vals: (string | number)[]) => {
+      where.push(clause);
+      args.push(...vals);
+    };
+    if (opts.accountId) add("account_id = ?", opts.accountId);
+    if (opts.from) add("scheduled_at >= ?", opts.from);
+    if (opts.to) add("scheduled_at < ?", opts.to);
+    if (opts.method) add("method = ?", opts.method);
+    if (opts.statuses?.length) add(`status IN (${opts.statuses.map(() => "?").join(",")})`, ...opts.statuses);
+    return db
+      .prepare(`SELECT * FROM posts ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY scheduled_at, id LIMIT 500`)
+      .all(...args)
+      .map(plain) as unknown as Post[];
+  },
+  postsFor(contentId: number): Post[] {
+    return db.prepare("SELECT * FROM posts WHERE content_id = ? ORDER BY platform").all(contentId).map(plain) as unknown as Post[];
+  },
+  post(id: number): Post | null {
+    return (plain(db.prepare("SELECT * FROM posts WHERE id = ?").get(id)) as unknown as Post) ?? null;
+  },
+  connection(accountId: number, platform: string): Connection | null {
+    return (plain(db.prepare("SELECT * FROM connections WHERE account_id = ? AND platform = ?").get(accountId, platform)) as unknown as Connection) ?? null;
   },
   counts(accountId: number) {
     const c = (sql: string) => (db.prepare(sql).get(accountId) as { n: number }).n;

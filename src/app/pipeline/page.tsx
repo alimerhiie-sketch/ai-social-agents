@@ -12,8 +12,8 @@ const COLUMNS: { status: string; title: string; hint: string; phase?: number }[]
   { status: "approved", title: "Approved", hint: "Ready for production" },
   { status: "producing", title: "Producing", hint: "Painting, voicing, rendering" },
   { status: "review", title: "Final review", hint: "Watch it, then approve" },
-  { status: "ready", title: "Ready to post", hint: "Publisher arrives in Phase 3" },
-  { status: "posted", title: "Posted", hint: "Live + analytics", phase: 3 },
+  { status: "ready", title: "Ready to post", hint: "Schedule it" },
+  { status: "scheduled", title: "Scheduled & posted", hint: "Publisher" },
 ];
 
 export default async function Pipeline({ searchParams }: { searchParams: Promise<{ account?: string }> }) {
@@ -45,7 +45,7 @@ export default async function Pipeline({ searchParams }: { searchParams: Promise
       <div className="-mx-4 overflow-x-auto px-4 pb-4 sm:mx-0 sm:px-0">
         <div className="grid min-w-[1180px] grid-cols-6 gap-3">
           {COLUMNS.map((col) => {
-            const list = items.filter((i) => i.status === col.status || (col.status === "posted" && i.status === "scheduled"));
+            const list = items.filter((i) => i.status === col.status || (col.status === "scheduled" && i.status === "posted"));
             return (
               <div key={col.status} className={`flex flex-col rounded-xl border border-line ${col.phase ? "bg-transparent" : "bg-panel/60"}`}>
                 <div className="flex items-baseline justify-between gap-2 border-b border-line px-3.5 py-3">

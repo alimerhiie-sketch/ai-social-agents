@@ -5,7 +5,7 @@ import { ART_STYLES, VIDEO_STYLES } from "@/lib/options";
 import type { ContentItem, Job } from "@/lib/types";
 import { JOB_KINDS } from "@/lib/agents/registry";
 import { prettyDate } from "@/lib/dates";
-import { deleteContent, produce, redoProduction, setContentStatus, updateContentText } from "../../actions";
+import { cancelPost, deleteContent, markPosted, postNow, produce, redoProduction, scheduleContent, setContentStatus, updateContentText } from "../../actions";
 import { CopyButton, SubmitButton } from "@/components/client";
 import { Badge, FormatBadge, JobStatusBadge, PageHeader, PlatformBadge, TextLink } from "@/components/ui";
 
@@ -53,7 +53,8 @@ export default async function ContentDetail({ params }: { params: Promise<{ id: 
 
       <div className="grid gap-6 xl:grid-cols-[1fr_340px]">
         <div className="min-w-0 space-y-6">
-          {["approved", "producing", "review", "ready"].includes(it.status) && <Production it={it} lastJob={lastJob ? { ...lastJob } : null} />}
+          {["ready", "scheduled", "posted"].includes(it.status) && <Publishing it={it} />}
+          {["approved", "producing", "review", "ready", "scheduled", "posted"].includes(it.status) && <Production it={it} lastJob={lastJob ? { ...lastJob } : null} />}
           <div className="panel p-6">
             <div className="eyebrow mb-2">Hook</div>
             <p className="text-xl font-medium leading-snug tracking-[-0.01em]">{it.hook}</p>
@@ -198,6 +199,7 @@ function StatusActions({ id, status }: { id: number; status: string }) {
         </SubmitButton>
       </form>
     );
+  if (status === "scheduled" || status === "posted") return <Badge tone="good">{status === "posted" ? "Posted" : "Scheduled"}</Badge>;
   if (status === "ready")
     return (
       <>
@@ -255,7 +257,7 @@ function Production({ it, lastJob }: { it: ContentItem; lastJob: Job | null }) {
         </div>
       )}
 
-      {m && (it.status === "review" || it.status === "ready") && (
+      {m && ["review", "ready", "scheduled", "posted"].includes(it.status) && (
         <div className="p-5">
           {m.kind === "reel" ? (
             <div className="flex flex-col gap-5 md:flex-row">
@@ -313,3 +315,67 @@ function ProductionActions({ it, downloads }: { it: ContentItem; downloads: { la
   );
 }
 
+
+function Publishing({ it }: { it: ContentItem }) {
+  const posts = q.postsFor(it.id).filter((p) => p.status !== "cancelled");
+  const account = q.account(it.account_id);
+  const igAuto = account ? !!q.connection(account.id, "instagram") : false;
+  return (
+    <div className="panel overflow-hidden">
+      <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3">
+        <div className="eyebrow">Publishing</div>
+        <Link href="/schedule" className="text-xs text-muted hover:text-fg">
+          Schedule →
+        </Link>
+      </div>
+      {posts.length === 0 ? (
+        <div className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <p className="text-[13px] leading-relaxed text-muted">
+            Takes the next free {it.format === "reel" ? "video" : "post"} slot on {it.planned_date ? prettyDate(it.planned_date) : "the next day"}.{" "}
+            {igAuto ? "Instagram posts automatically" : "Instagram isn't connected yet, so it goes to your phone page"}; TikTok goes to your phone page.
+          </p>
+          <form action={scheduleContent.bind(null, it.id)}>
+            <SubmitButton className="btn btn-primary" pending="Scheduling…">
+              Schedule
+            </SubmitButton>
+          </form>
+        </div>
+      ) : (
+        <div className="divide-y divide-line">
+          {posts.map((p) => (
+            <div key={p.id} className="flex flex-wrap items-center gap-3 px-5 py-3 text-[13px]">
+              <Badge tone="info">{p.platform === "instagram" ? "Instagram" : "TikTok"}</Badge>
+              <Badge>{p.method === "api" ? "auto" : "phone"}</Badge>
+              <span className="font-mono text-muted">
+                {new Date(p.scheduled_at).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+              </span>
+              <Badge tone={p.status === "posted" ? "good" : p.status === "failed" ? "bad" : p.status === "publishing" ? "accent" : "neutral"}>{p.status}</Badge>
+              {p.permalink && (
+                <a href={p.permalink} target="_blank" rel="noreferrer" className="text-muted underline underline-offset-4 hover:text-fg">
+                  view post
+                </a>
+              )}
+              {p.status !== "posted" && p.status !== "publishing" && (
+                <span className="ml-auto flex gap-2">
+                  {p.method === "api" ? (
+                    <form action={postNow.bind(null, p.id)}>
+                      <SubmitButton className="btn btn-sm">{p.status === "failed" ? "Retry now" : "Post now"}</SubmitButton>
+                    </form>
+                  ) : (
+                    <form action={markPosted.bind(null, p.id)}>
+                      <SubmitButton className="btn btn-sm">Mark posted</SubmitButton>
+                    </form>
+                  )}
+                  <form action={cancelPost.bind(null, p.id)}>
+                    <SubmitButton className="btn btn-ghost btn-sm">Cancel</SubmitButton>
+                  </form>
+                </span>
+              )}
+              {p.error && p.status === "failed" && <div className="basis-full text-xs text-bad">{p.error}</div>}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}

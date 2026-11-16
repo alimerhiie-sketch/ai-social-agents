@@ -18,3 +18,6 @@ export const prettyDate = (iso: string) =>
   at(iso).toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" });
 export const longDate = (iso: string) =>
   at(iso).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+
+/** Current time in ms. Server pages render per request, so reading the clock there is intended. */
+export const nowMs = () => Date.now();

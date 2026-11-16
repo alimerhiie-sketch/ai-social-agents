@@ -52,6 +52,8 @@ export function applyResult(job: Job, data: unknown): string {
     }
     case "render":
       return "Rendered";
+    case "publish":
+      return "Posted";
     case "strategy": {
       const s = data as Strategy;
       if (!s?.pillars) throw new Error("Strategy output is missing pillars");

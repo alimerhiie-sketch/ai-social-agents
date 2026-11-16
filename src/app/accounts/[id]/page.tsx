@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { q } from "@/lib/db";
 import { FORMATS, VIDEO_STYLES } from "@/lib/options";
 import type { Strategy } from "@/lib/types";
-import { runCycle, runJob, runPlanWeek } from "../../actions";
+import { connectInstagram, disconnect, runCycle, runJob, runPlanWeek } from "../../actions";
 import { CliBanner, CopyButton, SubmitButton } from "@/components/client";
 import { Badge, Empty, FormatBadge, PageHeader, Section, TextLink, timeAgo } from "@/components/ui";
 
@@ -63,6 +63,8 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
         <Fact label="Daily output" value={`${a.reels_per_day} video${a.reels_per_day === 1 ? "" : "s"} + ${a.posts_per_day} post${a.posts_per_day === 1 ? "" : "s"} · ${7 * (a.reels_per_day + a.posts_per_day)}/week`} />
         <Fact label="Formats · styles" value={[...label(FORMATS, a.formats), ...label(VIDEO_STYLES, a.video_styles)].join(", ") || "—"} />
       </div>
+
+      <Connections accountId={a.id} igHandle={a.ig_handle} />
 
       {a.strategy ? <StrategyView s={a.strategy} /> : (
         <Section title="Strategy">
@@ -245,5 +247,58 @@ function List({ items, mark, tone }: { items: string[]; mark: string; tone: stri
         </li>
       ))}
     </ul>
+  );
+}
+
+function Connections({ accountId, igHandle }: { accountId: number; igHandle: string }) {
+  const ig = q.connection(accountId, "instagram");
+  const err = q.setting(`connect-error:${accountId}`, "");
+  return (
+    <Section title="Connections">
+      <div className="grid gap-3 md:grid-cols-2">
+        <div className="panel p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-medium">Instagram</div>
+            {ig ? <Badge tone="good">Auto-posting</Badge> : <Badge tone="warn">Not connected</Badge>}
+          </div>
+          {ig ? (
+            <>
+              <p className="mt-2 text-[13px] text-muted">
+                Connected as <span className="text-fg">@{ig.username}</span>. The Publisher posts scheduled pieces automatically and keeps the
+                token refreshed{ig.expires_at ? ` (currently valid until ${new Date(ig.expires_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })})` : ""}.
+              </p>
+              <form action={disconnect.bind(null, accountId, "instagram")} className="mt-3">
+                <SubmitButton className="btn btn-ghost btn-sm">Disconnect</SubmitButton>
+              </form>
+            </>
+          ) : (
+            <form action={connectInstagram.bind(null, accountId)} className="mt-3 space-y-3">
+              <p className="text-[13px] leading-relaxed text-muted">
+                Paste the access token for {igHandle ? `@${igHandle}` : "this account"} from your Meta app (Instagram → API setup with Instagram
+                login → Generate token). Until it&apos;s connected, Instagram posts go to your phone page like TikTok.
+              </p>
+              <input name="token" type="password" autoComplete="off" placeholder="Instagram access token" className="input font-mono text-xs" />
+              {err && <p className="text-xs text-bad">{err}</p>}
+              <SubmitButton className="btn btn-sm" pending="Checking…">
+                Connect
+              </SubmitButton>
+            </form>
+          )}
+        </div>
+        <div className="panel p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-medium">TikTok</div>
+            <Badge tone="info">Phone hand-off</Badge>
+          </div>
+          <p className="mt-2 text-[13px] leading-relaxed text-muted">
+            TikTok only lets approved apps post publicly, so TikTok pieces appear on your phone page when they&apos;re due: download the video, copy the
+            caption, post it in the app with a trending sound, tap Posted.
+          </p>
+          <a href="/post" className="btn btn-sm mt-3">
+            Open the phone page
+          </a>
+        </div>
+      </div>
+    </Section>
   );
 }

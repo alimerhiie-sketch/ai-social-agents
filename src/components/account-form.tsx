@@ -86,6 +86,20 @@ export function AccountForm({ account, action, submitLabel }: { account?: Accoun
         </Field>
       </Group>
 
+      <Group title="Posting" hint="When the Publisher posts (your laptop's local time). One slot is used per piece; extra pieces roll to the next free slot.">
+        <div className="grid gap-5 sm:grid-cols-2">
+          <Field label="Video times">
+            <input name="reel_times" defaultValue={a?.reel_times ?? "13:00, 20:00"} placeholder="13:00, 20:00" className="input" />
+          </Field>
+          <Field label="Feed post times">
+            <input name="post_times" defaultValue={a?.post_times ?? "09:30, 17:30"} placeholder="09:30, 17:30" className="input" />
+          </Field>
+        </div>
+        <Field label="AI disclosure line (added to every caption — leave empty to turn off)">
+          <input name="ai_disclosure" defaultValue={a?.ai_disclosure ?? "Illustrated with AI."} className="input" />
+        </Field>
+      </Group>
+
       <Group title="Brand and guardrails">
         <Field label="Brand colours (hex, comma separated)">
           <input name="brand_colors" defaultValue={a?.brand_colors.join(", ")} placeholder="#1330E0, #0B1FA8, #FFFFFF" className="input" />

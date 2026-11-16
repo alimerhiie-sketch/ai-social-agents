@@ -3,6 +3,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { DATA_DIR, db, LOG_DIR, q } from "../db";
+import { publicMediaBase } from "../publish/tunnel";
+import { publish as igPublish, refreshToken as igRefresh, type IgMedia } from "../publish/instagram";
+import { captionFor } from "../publish/schedule";
 import type { Job, JobKind } from "../types";
 import { claudeBin } from "../claude-cli";
 import { applyResult } from "./apply";
@@ -25,6 +28,7 @@ const SCHEMAS: Record<JobKind, object> = {
   video: scenePlanSchema,
   design: scenePlanSchema,
   render: {},
+  publish: {},
 };
 
 type State = { running: Map<number, ChildProcess>; booted: boolean };
@@ -181,9 +185,9 @@ export function cancel(jobId: number) {
 
 export function kick() {
   reapOrphans();
-  // Count running jobs across every copy of this module, not just this one.
-  const runningNow = (db.prepare("SELECT COUNT(*) n FROM jobs WHERE status = 'running'").get() as { n: number }).n;
-  if (runningNow >= MAX_CONCURRENT) return;
+  // Count running jobs across every copy of this module, not just this one. Posting jobs are light
+  // and time-critical, so they never wait behind an agent run or a render.
+  let heavy = (db.prepare("SELECT COUNT(*) n FROM jobs WHERE status = 'running' AND kind != 'publish'").get() as { n: number }).n;
   const queued = db.prepare("SELECT * FROM jobs WHERE status = 'queued' ORDER BY id").all() as unknown as Job[];
   const now = new Date().toISOString();
   for (const job of queued) {
@@ -201,8 +205,13 @@ export function kick() {
       }
       if (dep.status !== "done") continue;
     }
+    if (job.kind === "publish") {
+      startPublish(job);
+      continue;
+    }
+    if (heavy >= MAX_CONCURRENT) continue;
+    heavy++;
     start(job);
-    return;
   }
 }
 
@@ -234,7 +243,7 @@ function start(job: Job) {
   const claimed = db
     .prepare(
       `UPDATE jobs SET status = 'running', model = ?, runner_pid = ?, error = NULL, started_at = datetime('now')
-       WHERE id = ? AND status = 'queued' AND (SELECT COUNT(*) FROM jobs WHERE status = 'running') < ?`,
+       WHERE id = ? AND status = 'queued' AND (SELECT COUNT(*) FROM jobs WHERE status = 'running' AND kind != 'publish') < ?`,
     )
     .run(model, process.pid, job.id, MAX_CONCURRENT);
   if (Number(claimed.changes) !== 1) return;
@@ -388,7 +397,7 @@ function startRender(job: Job) {
   const claimed = db
     .prepare(
       `UPDATE jobs SET status = 'running', model = 'local', runner_pid = ?, error = NULL, started_at = datetime('now')
-       WHERE id = ? AND status = 'queued' AND (SELECT COUNT(*) FROM jobs WHERE status = 'running') < ?`,
+       WHERE id = ? AND status = 'queued' AND (SELECT COUNT(*) FROM jobs WHERE status = 'running' AND kind != 'publish') < ?`,
     )
     .run(process.pid, job.id, MAX_CONCURRENT);
   if (Number(claimed.changes) !== 1) return;
@@ -490,4 +499,88 @@ function startRender(job: Job) {
     contentBack(c.id);
     finish("failed", null, msg || "Render failed", started);
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Publish jobs: post one scheduled Instagram post (ref_id = posts.id).
+
+export function enqueuePublish(postId: number, accountId: number, at: string) {
+  return enqueue("publish", accountId, { refId: postId, notBefore: at });
+}
+
+async function startPublish(job: Job) {
+  const claimed = db
+    .prepare("UPDATE jobs SET status = 'running', model = 'api', runner_pid = ?, error = NULL, started_at = datetime('now') WHERE id = ? AND status = 'queued'")
+    .run(process.pid, job.id);
+  if (Number(claimed.changes) !== 1) return;
+  const started = Date.now();
+  const say = (s: string) => log(job.id, s);
+  const end = (status: "done" | "failed", summary: string | null, error: string | null) => {
+    db.prepare("UPDATE jobs SET status = ?, summary = ?, error = ?, duration_ms = ?, finished_at = datetime('now') WHERE id = ?").run(
+      status, summary, error, Date.now() - started, job.id,
+    );
+  };
+  const post = job.ref_id ? q.post(job.ref_id) : null;
+  try {
+    if (!post || post.status === "cancelled" || post.status === "posted") {
+      say("◦ Nothing to do: the post was cancelled or already posted");
+      return end("done", "Skipped (cancelled or already posted)", null);
+    }
+    const c = q.contentItem(post.content_id);
+    const a = q.account(post.account_id);
+    if (!c || !a) throw new Error("The piece or account no longer exists");
+    if (!c.media) throw new Error("This piece hasn't been rendered yet");
+    let conn = q.connection(a.id, "instagram");
+    if (!conn) throw new Error("Instagram isn't connected for this account (Account → Connections)");
+    db.prepare("UPDATE posts SET status = 'publishing', error = NULL WHERE id = ?").run(post.id);
+    say(`▸ Publisher posting "${c.title}" to Instagram @${conn.username}`);
+
+    // Keep the 60-day token alive: refresh it at most once a week.
+    const lastRefresh = conn.refreshed_at ? new Date(conn.refreshed_at).getTime() : 0;
+    if (Date.now() - lastRefresh > 7 * 86400_000) {
+      try {
+        const r = await igRefresh(conn.token);
+        db.prepare("UPDATE connections SET token = ?, expires_at = ?, refreshed_at = ? WHERE account_id = ? AND platform = 'instagram'").run(
+          r.token, r.expiresAt, new Date().toISOString(), a.id,
+        );
+        conn = q.connection(a.id, "instagram")!;
+        say("› Refreshed the Instagram token (good for another 60 days)");
+      } catch (e) {
+        say(`› Token refresh skipped: ${(e as Error).message}`);
+      }
+    }
+
+    say("› Opening a temporary private link to the media…");
+    const base = await publicMediaBase(MEDIA_DIR);
+    const url = (f: string) => `${base}/${c.media!.dir}/${f}`;
+    const m = c.media;
+    const media: IgMedia =
+      m.kind === "reel"
+        ? { kind: "reel", video: url(m.files[0]), cover: m.cover ? url(m.cover) : undefined }
+        : m.files.length === 1
+          ? { kind: "image", image: url(m.files[0]) }
+          : { kind: "carousel", images: m.files.map(url) };
+    const r = await igPublish(conn.remote_user_id, conn.token, media, captionFor(a, c), say);
+    db.prepare("UPDATE posts SET status = 'posted', posted_at = ?, remote_id = ?, permalink = ?, error = NULL WHERE id = ?").run(
+      new Date().toISOString(), r.mediaId, r.permalink, post.id,
+    );
+    markContentPostedIfDone(c.id);
+    say(`✓ Live on Instagram${r.permalink ? `: ${r.permalink}` : ""}`);
+    end("done", `Posted to Instagram${r.permalink ? ` — ${r.permalink}` : ""}`, null);
+  } catch (e) {
+    const msg = (e as Error).message;
+    say(`✗ ${msg}`);
+    if (post) db.prepare("UPDATE posts SET status = 'failed', error = ? WHERE id = ?").run(msg, post.id);
+    end("failed", null, msg);
+  } finally {
+    setTimeout(kick, 0);
+  }
+}
+
+/** A piece is "posted" once every platform it was scheduled for is posted. */
+export function markContentPostedIfDone(contentId: number) {
+  const left = db.prepare("SELECT COUNT(*) n FROM posts WHERE content_id = ? AND status NOT IN ('posted','cancelled')").get(contentId) as { n: number };
+  const any = db.prepare("SELECT COUNT(*) n FROM posts WHERE content_id = ? AND status = 'posted'").get(contentId) as { n: number };
+  if (left.n === 0 && any.n > 0) db.prepare("UPDATE content SET status = 'posted', updated_at = datetime('now') WHERE id = ?").run(contentId);
 }

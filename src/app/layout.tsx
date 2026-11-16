@@ -19,6 +19,8 @@ const NAV = [
   { href: "/accounts", label: "Accounts", icon: "M12 12a4 4 0 100-8 4 4 0 000 8zm-8 9a8 8 0 0116 0" },
   { href: "/trends", label: "Trends", icon: "M3 17l6-6 4 4 8-8M15 7h6v6" },
   { href: "/pipeline", label: "Pipeline", icon: "M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v5h-4z" },
+  { href: "/schedule", label: "Schedule", icon: "M7 3v3m10-3v3M4 9h16M5 6h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1z" },
+  { href: "/post", label: "Phone", icon: "M8 3h8a1 1 0 011 1v16a1 1 0 01-1 1H8a1 1 0 01-1-1V4a1 1 0 011-1zM11 18h2" },
   { href: "/agents", label: "Agents", icon: "M12 3v3m0 12v3M3 12h3m12 0h3M7 7l2 2m6 6l2 2m0-10l-2 2M9 15l-2 2M12 9a3 3 0 100 6 3 3 0 000-6z" },
 ];
 
@@ -38,7 +40,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 </div>
                 <div>
                   <div className="text-[14px] font-semibold tracking-[-0.01em]">Agent HQ</div>
-                  <div className="text-[11px] text-dim">Phase 1 · Strategy</div>
+                  <div className="text-[11px] text-dim">Phase 3 · Publishing</div>
                 </div>
               </div>
               <nav className="-mx-1 flex gap-1 overflow-x-auto md:mx-0 md:flex-col md:overflow-visible">

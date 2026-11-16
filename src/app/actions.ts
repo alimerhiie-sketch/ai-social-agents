@@ -3,7 +3,8 @@
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { db, q } from "@/lib/db";
-import { cancel, enqueue, enqueueCycle, enqueuePlanWeek, enqueueProduce } from "@/lib/agents/runner";
+import { cancel, enqueue, enqueueCycle, enqueuePlanWeek, enqueueProduce, enqueuePublish, markContentPostedIfDone } from "@/lib/agents/runner";
+import { nextSlot } from "@/lib/publish/schedule";
 import { MODELS } from "@/lib/options";
 import type { JobKind } from "@/lib/types";
 
@@ -34,6 +35,9 @@ function accountFields(fd: FormData) {
     video_styles: JSON.stringify(many(fd, "video_styles")),
     art_styles: JSON.stringify(many(fd, "art_styles")),
     character: s(fd, "character"),
+    reel_times: s(fd, "reel_times") || "13:00, 20:00",
+    post_times: s(fd, "post_times") || "09:30, 17:30",
+    ai_disclosure: s(fd, "ai_disclosure"),
     reels_per_day: clampInt(s(fd, "reels_per_day"), 0, 6, 1),
     posts_per_day: clampInt(s(fd, "posts_per_day"), 0, 6, 1),
     posts_per_week: 7 * (clampInt(s(fd, "reels_per_day"), 0, 6, 1) + clampInt(s(fd, "posts_per_day"), 0, 6, 1)),
@@ -172,4 +176,97 @@ export async function produceAllApproved(accountId?: number) {
   for (const it of items) enqueueProduce(it.id);
   revalidatePath("/", "layout");
   redirect("/agents");
+}
+
+// ---------- Phase 3: publishing ----------
+
+export async function connectInstagram(accountId: number, fd: FormData) {
+  const token = s(fd, "token");
+  if (!token) return;
+  const { whoAmI } = await import("@/lib/publish/instagram");
+  let me: { userId: string; username: string; accountType: string };
+  try {
+    me = await whoAmI(token);
+  } catch (e) {
+    q.setSetting(`connect-error:${accountId}`, (e as Error).message);
+    revalidatePath(`/accounts/${accountId}`);
+    return;
+  }
+  q.setSetting(`connect-error:${accountId}`, "");
+  db.prepare(
+    `INSERT INTO connections (account_id, platform, remote_user_id, username, token, expires_at, refreshed_at)
+     VALUES (?, 'instagram', ?, ?, ?, ?, ?)
+     ON CONFLICT(account_id, platform) DO UPDATE SET remote_user_id = excluded.remote_user_id, username = excluded.username,
+       token = excluded.token, expires_at = excluded.expires_at, refreshed_at = excluded.refreshed_at`,
+  ).run(accountId, me.userId, me.username, token, new Date(Date.now() + 60 * 86400_000).toISOString(), new Date().toISOString());
+  revalidatePath(`/accounts/${accountId}`);
+}
+
+export async function disconnect(accountId: number, platform: string) {
+  db.prepare("DELETE FROM connections WHERE account_id = ? AND platform = ?").run(accountId, platform);
+  revalidatePath(`/accounts/${accountId}`);
+}
+
+function scheduleOne(contentId: number) {
+  const c = q.contentItem(contentId);
+  if (!c || c.status !== "ready" || !c.media) return 0;
+  const a = q.account(c.account_id);
+  if (!a) return 0;
+  const want = (c.platform === "both" ? ["instagram", "tiktok"] : [c.platform]).filter((p) => a.platforms.includes(p));
+  const igApi = !!q.connection(a.id, "instagram");
+  const at = nextSlot(a, c);
+  let n = 0;
+  for (const platform of want) {
+    const method = platform === "instagram" && igApi ? "api" : "phone";
+    const r = db
+      .prepare("INSERT INTO posts (content_id, account_id, platform, method, status, scheduled_at) VALUES (?, ?, ?, ?, 'scheduled', ?)")
+      .run(c.id, a.id, platform, method, at);
+    if (method === "api") enqueuePublish(Number(r.lastInsertRowid), a.id, at);
+    n++;
+  }
+  if (n) db.prepare("UPDATE content SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?").run(c.id);
+  return n;
+}
+
+export async function scheduleContent(contentId: number) {
+  scheduleOne(contentId);
+  revalidatePath("/", "layout");
+}
+
+export async function scheduleAllReady(accountId?: number) {
+  for (const c of q.content({ accountId, status: "ready", limit: 500 })) scheduleOne(c.id);
+  revalidatePath("/", "layout");
+  redirect("/schedule");
+}
+
+export async function postNow(postId: number) {
+  const p = q.post(postId);
+  if (!p || p.status === "posted" || p.status === "publishing") return;
+  const now = new Date().toISOString();
+  db.prepare("UPDATE posts SET scheduled_at = ?, status = 'scheduled', error = NULL WHERE id = ?").run(now, postId);
+  if (p.method === "api") {
+    db.prepare("UPDATE jobs SET status = 'cancelled', finished_at = datetime('now') WHERE kind = 'publish' AND ref_id = ? AND status = 'queued'").run(postId);
+    enqueuePublish(postId, p.account_id, now);
+  }
+  revalidatePath("/", "layout");
+}
+
+export async function markPosted(postId: number, fd?: FormData) {
+  const link = fd ? s(fd, "link") : "";
+  const p = q.post(postId);
+  if (!p) return;
+  db.prepare("UPDATE posts SET status = 'posted', posted_at = ?, permalink = COALESCE(NULLIF(?, ''), permalink) WHERE id = ?").run(new Date().toISOString(), link, postId);
+  markContentPostedIfDone(p.content_id);
+  revalidatePath("/", "layout");
+}
+
+export async function cancelPost(postId: number) {
+  const p = q.post(postId);
+  if (!p || p.status === "posted") return;
+  db.prepare("UPDATE posts SET status = 'cancelled' WHERE id = ?").run(postId);
+  db.prepare("UPDATE jobs SET status = 'cancelled', finished_at = datetime('now') WHERE kind = 'publish' AND ref_id = ? AND status = 'queued'").run(postId);
+  const active = db.prepare("SELECT COUNT(*) n FROM posts WHERE content_id = ? AND status NOT IN ('cancelled')").get(p.content_id) as { n: number };
+  if (active.n === 0) db.prepare("UPDATE content SET status = 'ready', updated_at = datetime('now') WHERE id = ?").run(p.content_id);
+  else markContentPostedIfDone(p.content_id);
+  revalidatePath("/", "layout");
 }
