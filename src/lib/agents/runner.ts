@@ -52,8 +52,11 @@ function alive(pid: number | null | undefined): boolean {
 
 /** Running jobs whose owning server process died (a real restart or crash) are marked failed. */
 function reapOrphans() {
-  const running = db.prepare("SELECT id, runner_pid, child_pid FROM jobs WHERE status = 'running'").all() as {
+  const running = db.prepare("SELECT id, kind, account_id, ref_id, runner_pid, child_pid FROM jobs WHERE status = 'running'").all() as {
     id: number;
+    kind: JobKind;
+    account_id: number;
+    ref_id: number | null;
     runner_pid: number | null;
     child_pid: number | null;
   }[];
@@ -68,6 +71,13 @@ function reapOrphans() {
       "UPDATE jobs SET status = 'failed', error = 'Interrupted: the dashboard server stopped while this job was running', finished_at = datetime('now') WHERE id = ? AND status = 'running'",
     ).run(j.id);
     log(j.id, "✗ Interrupted: the dashboard server stopped while this job was running");
+    // Production work is safe to redo (painted images are reused), so queue it again instead of
+    // leaving the piece stuck in "producing".
+    if ((j.kind === "video" || j.kind === "design" || j.kind === "render") && j.ref_id) {
+      const again = enqueue(j.kind, j.account_id, { refId: j.ref_id });
+      log(j.id, `↻ Requeued as run #${again}`);
+      if (j.kind !== "render") enqueue("render", j.account_id, { refId: j.ref_id, dependsOn: again });
+    }
   }
 }
 
