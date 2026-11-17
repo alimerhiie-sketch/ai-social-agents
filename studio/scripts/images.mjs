@@ -198,6 +198,8 @@ export async function generateImage({ prompt, seed, out, aspect = "portrait", re
         return { provider: await provider({ prompt, seed, out, aspect, reference }), file: out };
       } catch (e) {
         const msg = String(e?.message || e);
+        // Say why a provider was skipped: a silent fallback once hid a bug that burnt the whole free quota.
+        console.log(`PROGRESS   (${provider.name} failed${attempt ? " again" : ""}: ${msg.replace(/\s+/g, " ").slice(0, 300)})`);
         // Out of free quota, not configured, not running, disabled: none of these fix themselves on a retry.
         if (e?.quota) quota = e;
         if (e?.quota || /not configured|not running|disabled/.test(msg)) {
