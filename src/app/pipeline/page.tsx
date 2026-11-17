@@ -3,7 +3,7 @@ import { q } from "@/lib/db";
 import type { ContentItem } from "@/lib/types";
 import { AccountFilter } from "@/components/account-filter";
 import { SubmitButton } from "@/components/client";
-import { produceAllApproved } from "../actions";
+import { approveAllReview, approveAllScripted, produceAllApproved } from "../actions";
 import { Badge, FormatBadge, PageHeader, PlatformBadge } from "@/components/ui";
 import { prettyDate } from "@/lib/dates";
 
@@ -55,6 +55,14 @@ export default async function Pipeline({ searchParams }: { searchParams: Promise
                   </div>
                   <span className="font-mono text-xs tabular-nums text-dim">{list.length}</span>
                 </div>
+                {/* Bulk approval: scripts → approved, rendered pieces → ready to post */}
+                {list.length > 0 && (col.status === "scripted" || col.status === "review") && (
+                  <form action={(col.status === "scripted" ? approveAllScripted : approveAllReview).bind(null, accountId)} className="px-2.5 pt-2.5">
+                    <SubmitButton className="btn btn-primary btn-sm w-full" pending="Approving…">
+                      Approve all {list.length}
+                    </SubmitButton>
+                  </form>
+                )}
                 <div className="flex flex-col gap-2 p-2.5">
                   {list.map((it) => (
                     <Card key={it.id} it={it} account={accountId ? null : (names.get(it.account_id) ?? null)} />
