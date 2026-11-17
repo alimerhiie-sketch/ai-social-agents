@@ -1,26 +1,24 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { db, q } from "@/lib/db";
+import { q, sql } from "@/lib/db";
 import { ART_STYLES, VIDEO_STYLES } from "@/lib/options";
 import type { ContentItem, Job } from "@/lib/types";
 import { JOB_KINDS } from "@/lib/agents/registry";
-import { prettyDate } from "@/lib/dates";
+import { localDateTime, localTime, prettyDate } from "@/lib/dates";
 import { cancelPost, deleteContent, markPosted, postNow, produce, redoProduction, scheduleContent, setContentStatus, updateContentText } from "../../actions";
 import { CopyButton, SubmitButton } from "@/components/client";
 import { Badge, FormatBadge, JobStatusBadge, PageHeader, PlatformBadge, TextLink } from "@/components/ui";
 
 export default async function ContentDetail({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const it = q.contentItem(Number(id));
+  const it = await q.contentItem(Number(id));
   if (!it) notFound();
-  const account = q.account(it.account_id);
-  const trend = it.trend_id ? q.trend(it.trend_id) : null;
+  const account = await q.account(it.account_id);
+  const trend = it.trend_id ? await q.trend(it.trend_id) : null;
   const style = VIDEO_STYLES.find((v) => v.id === it.video_style)?.label ?? it.video_style;
   const total = it.script.reduce((s, b) => s + (Number(b.seconds) || 0), 0);
   const fullCaption = `${it.caption}\n\n${it.hashtags.map((h) => `#${h}`).join(" ")}`;
-  const lastJob = db
-    .prepare("SELECT * FROM jobs WHERE ref_id = ? AND kind IN ('video','design','render') ORDER BY id DESC LIMIT 1")
-    .get(it.id) as Job | undefined;
+  const lastJob = await sql.get<Job>("SELECT * FROM jobs WHERE ref_id = ? AND kind IN ('video','design','render') ORDER BY id DESC LIMIT 1", it.id);
   const artStyle = ART_STYLES.find((s) => s.id === (it.art_style || account?.art_styles[0]));
 
   return (
@@ -168,7 +166,7 @@ export default async function ContentDetail({ params }: { params: Promise<{ id: 
   );
 }
 
-function StatusActions({ id, status }: { id: number; status: string }) {
+async function StatusActions({ id, status }: { id: number; status: string }) {
   if (status === "scripted")
     return (
       <>
@@ -217,7 +215,7 @@ function StatusActions({ id, status }: { id: number; status: string }) {
   );
 }
 
-function Production({ it, lastJob }: { it: ContentItem; lastJob: Job | null }) {
+async function Production({ it, lastJob }: { it: ContentItem; lastJob: Job | null }) {
   const m = it.media;
   const src = (f: string) => `/api/media/${m!.dir}/${f}`;
   return (
@@ -252,7 +250,7 @@ function Production({ it, lastJob }: { it: ContentItem; lastJob: Job | null }) {
         <div className="flex items-center gap-3 p-5 text-[13px] text-muted">
           <span className="live-dot size-2 rounded-full bg-accent" />
           {lastJob?.status === "queued" && lastJob.not_before
-            ? `Paused: today's free image quota is used up. It continues automatically at ${new Date(lastJob.not_before).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}.`
+            ? `Paused: today's free image quota is used up. It continues automatically at ${localTime(lastJob.not_before)}.`
             : "In production. Watch it live in the run log; this page refreshes when it finishes."}
         </div>
       )}
@@ -289,7 +287,7 @@ function Production({ it, lastJob }: { it: ContentItem; lastJob: Job | null }) {
   );
 }
 
-function ProductionActions({ it, downloads }: { it: ContentItem; downloads: { label: string; href: string }[] }) {
+async function ProductionActions({ it, downloads }: { it: ContentItem; downloads: { label: string; href: string }[] }) {
   return (
     <div className="flex flex-1 flex-col gap-4">
       {it.production?.notes && <p className="text-[13px] leading-relaxed text-muted">{it.production.notes}</p>}
@@ -316,10 +314,10 @@ function ProductionActions({ it, downloads }: { it: ContentItem; downloads: { la
 }
 
 
-function Publishing({ it }: { it: ContentItem }) {
-  const posts = q.postsFor(it.id).filter((p) => p.status !== "cancelled");
-  const account = q.account(it.account_id);
-  const igAuto = account ? !!q.connection(account.id, "instagram") : false;
+async function Publishing({ it }: { it: ContentItem }) {
+  const posts = (await q.postsFor(it.id)).filter((p) => p.status !== "cancelled");
+  const account = await q.account(it.account_id);
+  const igAuto = account ? !!await q.connection(account.id, "instagram") : false;
   return (
     <div className="panel overflow-hidden">
       <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3">
@@ -347,7 +345,7 @@ function Publishing({ it }: { it: ContentItem }) {
               <Badge tone="info">{p.platform === "instagram" ? "Instagram" : "TikTok"}</Badge>
               <Badge>{p.method === "api" ? "auto" : "phone"}</Badge>
               <span className="font-mono text-muted">
-                {new Date(p.scheduled_at).toLocaleString("en-GB", { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
+                {localDateTime(p.scheduled_at)}
               </span>
               <Badge tone={p.status === "posted" ? "good" : p.status === "failed" ? "bad" : p.status === "publishing" ? "accent" : "neutral"}>{p.status}</Badge>
               {p.permalink && (

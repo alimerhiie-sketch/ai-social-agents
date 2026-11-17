@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { LiveIndicator, NavLink } from "@/components/client";
-import "@/lib/agents/runner"; // boots the job queue with the server
+import { headers } from "next/headers";
+import { requireAuth } from "@/lib/auth";
+import { q } from "@/lib/db";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
@@ -24,7 +26,12 @@ const NAV = [
   { href: "/agents", label: "Agents", icon: "M12 3v3m0 12v3M3 12h3m12 0h3M7 7l2 2m6 6l2 2m0-10l-2 2M9 15l-2 2M12 9a3 3 0 100 6 3 3 0 000-6z" },
 ];
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  await requireAuth();
+  // The cron builds Instagram's signed media links from this address, so remember it.
+  const host = (await headers()).get("host");
+  if (host && !host.startsWith("localhost") && (await q.setting("public_url", "")) !== `https://${host}`) await q.setSetting("public_url", `https://${host}`);
+
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="min-h-dvh">
@@ -40,7 +47,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 </div>
                 <div>
                   <div className="text-[14px] font-semibold tracking-[-0.01em]">Agent HQ</div>
-                  <div className="text-[11px] text-dim">Phase 3 · Publishing</div>
+                  <div className="text-[11px] text-dim">Cloud · runs 24/7</div>
                 </div>
               </div>
               <nav className="-mx-1 flex gap-1 overflow-x-auto md:mx-0 md:flex-col md:overflow-visible">

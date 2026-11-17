@@ -2,8 +2,8 @@ import Link from "next/link";
 import { q } from "@/lib/db";
 import { Badge, Empty, PageHeader } from "@/components/ui";
 
-export default function Accounts() {
-  const accounts = q.accounts();
+export default async function Accounts() {
+  const accounts = await q.accounts();
   return (
     <>
       <PageHeader

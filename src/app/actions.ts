@@ -2,11 +2,15 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import { db, q } from "@/lib/db";
-import { cancel, enqueue, enqueueCycle, enqueuePlanWeek, enqueueProduce, enqueuePublish, markContentPostedIfDone } from "@/lib/agents/runner";
+import { q, sql } from "@/lib/db";
+import { requireAuth } from "@/lib/auth";
+import { cancel, enqueue, enqueueCycle, enqueuePlanWeek, enqueueProduce, markContentPostedIfDone, wakeRunner } from "@/lib/queue";
 import { nextSlot } from "@/lib/publish/schedule";
 import { MODELS } from "@/lib/options";
 import type { JobKind } from "@/lib/types";
+
+// Every action checks the session first: the dashboard is on the public internet, and server actions
+// can be called directly. Actions that queue work also wake the GitHub runner straight away.
 
 const s = (fd: FormData, k: string) => String(fd.get(k) ?? "").trim();
 const clampInt = (v: string, min: number, max: number, fallback: number) => {
@@ -14,6 +18,7 @@ const clampInt = (v: string, min: number, max: number, fallback: number) => {
   return Number.isFinite(n) ? Math.max(min, Math.min(max, n)) : fallback;
 };
 const many = (fd: FormData, k: string) => fd.getAll(k).map(String).filter(Boolean);
+const wake = (why: string) => wakeRunner(why).catch(() => "");
 
 function accountFields(fd: FormData) {
   const colors = s(fd, "brand_colors")
@@ -41,7 +46,7 @@ function accountFields(fd: FormData) {
     reels_per_day: clampInt(s(fd, "reels_per_day"), 0, 6, 1),
     posts_per_day: clampInt(s(fd, "posts_per_day"), 0, 6, 1),
     posts_per_week: 7 * (clampInt(s(fd, "reels_per_day"), 0, 6, 1) + clampInt(s(fd, "posts_per_day"), 0, 6, 1)),
-    approval_mode: "manual", // auto-posting arrives with the Publisher in Phase 3
+    approval_mode: "manual",
     brand_colors: JSON.stringify(colors),
     avoid: s(fd, "avoid"),
     inspiration: s(fd, "inspiration"),
@@ -49,80 +54,105 @@ function accountFields(fd: FormData) {
 }
 
 export async function createAccount(fd: FormData) {
+  await requireAuth();
   const f = accountFields(fd);
   const keys = Object.keys(f);
-  const r = db
-    .prepare(`INSERT INTO accounts (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`)
-    .run(...Object.values(f));
-  const id = Number(r.lastInsertRowid);
-  if (fd.get("start_strategy") === "on") enqueue("strategy", id);
+  const r = await sql.run(`INSERT INTO accounts (${keys.join(",")}) VALUES (${keys.map(() => "?").join(",")})`, ...Object.values(f));
+  if (fd.get("start_strategy") === "on") {
+    await enqueue("strategy", r.lastRowId);
+    await wake("new account");
+  }
   revalidatePath("/", "layout");
-  redirect(`/accounts/${id}`);
+  redirect(`/accounts/${r.lastRowId}`);
 }
 
 export async function updateAccount(id: number, fd: FormData) {
+  await requireAuth();
   const f = accountFields(fd);
-  db.prepare(`UPDATE accounts SET ${Object.keys(f).map((k) => `${k} = ?`).join(", ")} WHERE id = ?`).run(
-    ...Object.values(f),
-    id,
-  );
+  await sql.run(`UPDATE accounts SET ${Object.keys(f).map((k) => `${k} = ?`).join(", ")} WHERE id = ?`, ...Object.values(f), id);
   revalidatePath("/", "layout");
   redirect(`/accounts/${id}`);
 }
 
 export async function deleteAccount(id: number) {
-  db.prepare("DELETE FROM accounts WHERE id = ?").run(id);
+  await requireAuth();
+  await sql.run("DELETE FROM accounts WHERE id = ?", id);
   revalidatePath("/", "layout");
   redirect("/accounts");
 }
 
 export async function runJob(kind: JobKind, accountId: number) {
-  const id = enqueue(kind, accountId);
+  await requireAuth();
+  const id = await enqueue(kind, accountId);
+  await wake(kind);
   revalidatePath("/", "layout");
   redirect(`/agents/jobs/${id}`);
 }
 
 export async function runPlanWeek(accountId: number) {
-  enqueuePlanWeek(accountId);
+  await requireAuth();
+  await enqueuePlanWeek(accountId);
+  await wake("plan week");
   revalidatePath("/", "layout");
   redirect(`/agents`);
 }
 
 export async function runCycle(accountId: number) {
-  enqueueCycle(accountId);
+  await requireAuth();
+  await enqueueCycle(accountId);
+  await wake("weekly cycle");
   revalidatePath("/", "layout");
   redirect(`/agents`);
 }
 
 export async function contentFromTrend(trendId: number) {
-  const t = q.trend(trendId);
+  await requireAuth();
+  const t = await q.trend(trendId);
   if (!t) return;
-  const id = enqueue("from-trend", t.account_id, { refId: trendId });
+  const id = await enqueue("from-trend", t.account_id, { refId: trendId });
+  await wake("from trend");
   revalidatePath("/", "layout");
   redirect(`/agents/jobs/${id}`);
 }
 
 export async function setTrendStatus(trendId: number, status: "new" | "dismissed") {
-  db.prepare("UPDATE trends SET status = ? WHERE id = ?").run(status, trendId);
+  await requireAuth();
+  await sql.run("UPDATE trends SET status = ? WHERE id = ?", status, trendId);
   revalidatePath("/trends");
 }
 
 export async function setContentStatus(id: number, status: string, fd?: FormData) {
+  await requireAuth();
   const feedback = fd ? s(fd, "feedback") : null;
-  if (feedback !== null) {
-    db.prepare("UPDATE content SET status = ?, feedback = ?, updated_at = datetime('now') WHERE id = ?").run(status, feedback, id);
-  } else {
-    db.prepare("UPDATE content SET status = ?, updated_at = datetime('now') WHERE id = ?").run(status, id);
-  }
+  if (feedback !== null) await sql.run("UPDATE content SET status = ?, feedback = ?, updated_at = datetime('now') WHERE id = ?", status, feedback, id);
+  else await sql.run("UPDATE content SET status = ?, updated_at = datetime('now') WHERE id = ?", status, id);
+  revalidatePath("/", "layout");
+}
+
+/** Approve every script waiting for review (optionally for one account). */
+export async function approveAllScripted(accountId?: number) {
+  await requireAuth();
+  if (accountId) await sql.run("UPDATE content SET status = 'approved', updated_at = datetime('now') WHERE status = 'scripted' AND account_id = ?", accountId);
+  else await sql.run("UPDATE content SET status = 'approved', updated_at = datetime('now') WHERE status = 'scripted'");
+  revalidatePath("/", "layout");
+}
+
+/** Sign off every rendered piece in final review as ready to post. */
+export async function approveAllReview(accountId?: number) {
+  await requireAuth();
+  if (accountId) await sql.run("UPDATE content SET status = 'ready', updated_at = datetime('now') WHERE status = 'review' AND account_id = ?", accountId);
+  else await sql.run("UPDATE content SET status = 'ready', updated_at = datetime('now') WHERE status = 'review'");
   revalidatePath("/", "layout");
 }
 
 export async function updateContentText(id: number, fd: FormData) {
+  await requireAuth();
   const hashtags = s(fd, "hashtags")
     .split(/[\s,]+/)
     .map((h) => h.replace(/^#/, ""))
     .filter(Boolean);
-  db.prepare("UPDATE content SET hook = ?, caption = ?, hashtags = ?, cta = ?, updated_at = datetime('now') WHERE id = ?").run(
+  await sql.run(
+    "UPDATE content SET hook = ?, caption = ?, hashtags = ?, cta = ?, updated_at = datetime('now') WHERE id = ?",
     s(fd, "hook"),
     s(fd, "caption"),
     JSON.stringify(hashtags),
@@ -133,54 +163,64 @@ export async function updateContentText(id: number, fd: FormData) {
 }
 
 export async function deleteContent(id: number) {
-  db.prepare("DELETE FROM content WHERE id = ?").run(id);
+  await requireAuth();
+  await sql.run("DELETE FROM content WHERE id = ?", id);
   revalidatePath("/", "layout");
   redirect("/pipeline");
 }
 
 export async function cancelJob(id: number) {
-  cancel(id);
+  await requireAuth();
+  await cancel(id);
   revalidatePath("/", "layout");
 }
 
 /** settingKey is `model:<agent>` or `model:<agent>:scripts`. */
 export async function setAgentModel(settingKey: string, fd: FormData) {
+  await requireAuth();
   const model = s(fd, "model");
-  if (/^model:[a-z-]+(:scripts)?$/.test(settingKey) && MODELS.some((m) => m.id === model)) q.setSetting(settingKey, model);
+  if (/^model:[a-z-]+(:scripts)?$/.test(settingKey) && MODELS.some((m) => m.id === model)) await q.setSetting(settingKey, model);
   revalidatePath("/agents");
 }
 
-// ---------- Phase 2: production ----------
+// ---------- production ----------
 
 export async function produce(contentId: number) {
-  const c = q.contentItem(contentId);
+  await requireAuth();
+  const c = await q.contentItem(contentId);
   if (!c || !["approved", "review", "ready"].includes(c.status)) return;
-  enqueueProduce(contentId);
+  await enqueueProduce(contentId);
+  await wake("produce");
   revalidatePath("/", "layout");
 }
 
 /** Throw away the scene plan and render, and produce from scratch (new images, new plan). */
 export async function redoProduction(contentId: number, fd?: FormData) {
+  await requireAuth();
   const note = fd ? s(fd, "feedback") : "";
-  db.prepare("UPDATE content SET production = NULL, media = NULL, status = 'approved', feedback = CASE WHEN ? != '' THEN ? ELSE feedback END, updated_at = datetime('now') WHERE id = ?").run(
+  await sql.run(
+    "UPDATE content SET production = NULL, media = NULL, status = 'approved', feedback = CASE WHEN ? != '' THEN ? ELSE feedback END, updated_at = datetime('now') WHERE id = ?",
     note,
     note,
     contentId,
   );
-  enqueueProduce(contentId);
+  await enqueueProduce(contentId);
+  await wake("redo");
   revalidatePath("/", "layout");
 }
 
 export async function produceAllApproved(accountId?: number) {
-  const items = q.content({ accountId, status: "approved", limit: 200 });
-  for (const it of items) enqueueProduce(it.id);
+  await requireAuth();
+  for (const it of await q.content({ accountId, status: "approved", limit: 200 })) await enqueueProduce(it.id);
+  await wake("produce all");
   revalidatePath("/", "layout");
   redirect("/agents");
 }
 
-// ---------- Phase 3: publishing ----------
+// ---------- publishing ----------
 
 export async function connectInstagram(accountId: number, fd: FormData) {
+  await requireAuth();
   const token = s(fd, "token");
   if (!token) return;
   const { whoAmI } = await import("@/lib/publish/instagram");
@@ -188,85 +228,95 @@ export async function connectInstagram(accountId: number, fd: FormData) {
   try {
     me = await whoAmI(token);
   } catch (e) {
-    q.setSetting(`connect-error:${accountId}`, (e as Error).message);
+    await q.setSetting(`connect-error:${accountId}`, (e as Error).message);
     revalidatePath(`/accounts/${accountId}`);
     return;
   }
-  q.setSetting(`connect-error:${accountId}`, "");
-  db.prepare(
+  await q.setSetting(`connect-error:${accountId}`, "");
+  await sql.run(
     `INSERT INTO connections (account_id, platform, remote_user_id, username, token, expires_at, refreshed_at)
      VALUES (?, 'instagram', ?, ?, ?, ?, ?)
      ON CONFLICT(account_id, platform) DO UPDATE SET remote_user_id = excluded.remote_user_id, username = excluded.username,
        token = excluded.token, expires_at = excluded.expires_at, refreshed_at = excluded.refreshed_at`,
-  ).run(accountId, me.userId, me.username, token, new Date(Date.now() + 60 * 86400_000).toISOString(), new Date().toISOString());
+    accountId,
+    me.userId,
+    me.username,
+    token,
+    new Date(Date.now() + 60 * 86400_000).toISOString(),
+    new Date().toISOString(),
+  );
+  // Pieces already waiting to go out switch from the phone page to automatic posting.
+  await sql.run("UPDATE posts SET method = 'api' WHERE account_id = ? AND platform = 'instagram' AND status = 'scheduled'", accountId);
   revalidatePath(`/accounts/${accountId}`);
 }
 
 export async function disconnect(accountId: number, platform: string) {
-  db.prepare("DELETE FROM connections WHERE account_id = ? AND platform = ?").run(accountId, platform);
+  await requireAuth();
+  await sql.run("DELETE FROM connections WHERE account_id = ? AND platform = ?", accountId, platform);
+  await sql.run("UPDATE posts SET method = 'phone' WHERE account_id = ? AND platform = ? AND status = 'scheduled'", accountId, platform);
   revalidatePath(`/accounts/${accountId}`);
 }
 
-function scheduleOne(contentId: number) {
-  const c = q.contentItem(contentId);
+async function scheduleOne(contentId: number) {
+  const c = await q.contentItem(contentId);
   if (!c || c.status !== "ready" || !c.media) return 0;
-  const a = q.account(c.account_id);
+  const a = await q.account(c.account_id);
   if (!a) return 0;
   const want = (c.platform === "both" ? ["instagram", "tiktok"] : [c.platform]).filter((p) => a.platforms.includes(p));
-  const igApi = !!q.connection(a.id, "instagram");
-  const at = nextSlot(a, c);
-  let n = 0;
-  for (const platform of want) {
-    const method = platform === "instagram" && igApi ? "api" : "phone";
-    const r = db
-      .prepare("INSERT INTO posts (content_id, account_id, platform, method, status, scheduled_at) VALUES (?, ?, ?, ?, 'scheduled', ?)")
-      .run(c.id, a.id, platform, method, at);
-    if (method === "api") enqueuePublish(Number(r.lastInsertRowid), a.id, at);
-    n++;
-  }
-  if (n) db.prepare("UPDATE content SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?").run(c.id);
-  return n;
+  const igApi = !!(await q.connection(a.id, "instagram"));
+  const at = await nextSlot(a, c);
+  for (const platform of want)
+    await sql.run(
+      "INSERT INTO posts (content_id, account_id, platform, method, status, scheduled_at) VALUES (?, ?, ?, ?, 'scheduled', ?)",
+      c.id,
+      a.id,
+      platform,
+      platform === "instagram" && igApi ? "api" : "phone",
+      at,
+    );
+  if (want.length) await sql.run("UPDATE content SET status = 'scheduled', updated_at = datetime('now') WHERE id = ?", c.id);
+  return want.length;
 }
 
 export async function scheduleContent(contentId: number) {
-  scheduleOne(contentId);
+  await requireAuth();
+  await scheduleOne(contentId);
   revalidatePath("/", "layout");
 }
 
 export async function scheduleAllReady(accountId?: number) {
-  for (const c of q.content({ accountId, status: "ready", limit: 500 })) scheduleOne(c.id);
+  await requireAuth();
+  for (const c of await q.content({ accountId, status: "ready", limit: 500 })) await scheduleOne(c.id);
   revalidatePath("/", "layout");
   redirect("/schedule");
 }
 
+/** Instagram (automatic) posts go out on the next cron tick, within 5 minutes. */
 export async function postNow(postId: number) {
-  const p = q.post(postId);
+  await requireAuth();
+  const p = await q.post(postId);
   if (!p || p.status === "posted" || p.status === "publishing") return;
-  const now = new Date().toISOString();
-  db.prepare("UPDATE posts SET scheduled_at = ?, status = 'scheduled', error = NULL WHERE id = ?").run(now, postId);
-  if (p.method === "api") {
-    db.prepare("UPDATE jobs SET status = 'cancelled', finished_at = datetime('now') WHERE kind = 'publish' AND ref_id = ? AND status = 'queued'").run(postId);
-    enqueuePublish(postId, p.account_id, now);
-  }
+  await sql.run("UPDATE posts SET scheduled_at = ?, status = 'scheduled', container_id = NULL, error = NULL WHERE id = ?", new Date().toISOString(), postId);
   revalidatePath("/", "layout");
 }
 
 export async function markPosted(postId: number, fd?: FormData) {
+  await requireAuth();
   const link = fd ? s(fd, "link") : "";
-  const p = q.post(postId);
+  const p = await q.post(postId);
   if (!p) return;
-  db.prepare("UPDATE posts SET status = 'posted', posted_at = ?, permalink = COALESCE(NULLIF(?, ''), permalink) WHERE id = ?").run(new Date().toISOString(), link, postId);
-  markContentPostedIfDone(p.content_id);
+  await sql.run("UPDATE posts SET status = 'posted', posted_at = ?, permalink = COALESCE(NULLIF(?, ''), permalink) WHERE id = ?", new Date().toISOString(), link, postId);
+  await markContentPostedIfDone(p.content_id);
   revalidatePath("/", "layout");
 }
 
 export async function cancelPost(postId: number) {
-  const p = q.post(postId);
+  await requireAuth();
+  const p = await q.post(postId);
   if (!p || p.status === "posted") return;
-  db.prepare("UPDATE posts SET status = 'cancelled' WHERE id = ?").run(postId);
-  db.prepare("UPDATE jobs SET status = 'cancelled', finished_at = datetime('now') WHERE kind = 'publish' AND ref_id = ? AND status = 'queued'").run(postId);
-  const active = db.prepare("SELECT COUNT(*) n FROM posts WHERE content_id = ? AND status NOT IN ('cancelled')").get(p.content_id) as { n: number };
-  if (active.n === 0) db.prepare("UPDATE content SET status = 'ready', updated_at = datetime('now') WHERE id = ?").run(p.content_id);
-  else markContentPostedIfDone(p.content_id);
+  await sql.run("UPDATE posts SET status = 'cancelled' WHERE id = ?", postId);
+  const active = await sql.get<{ n: number }>("SELECT COUNT(*) n FROM posts WHERE content_id = ? AND status NOT IN ('cancelled')", p.content_id);
+  if ((active?.n ?? 0) === 0) await sql.run("UPDATE content SET status = 'ready', updated_at = datetime('now') WHERE id = ?", p.content_id);
+  else await markContentPostedIfDone(p.content_id);
   revalidatePath("/", "layout");
 }

@@ -1,4 +1,4 @@
-import { db, q } from "../db";
+import { q, sql } from "../db";
 import type { Job, Strategy } from "../types";
 import { prettyDate, weekdayShort } from "../dates";
 
@@ -39,14 +39,14 @@ type ItemOut = {
   rationale: string;
 };
 
-export function applyResult(job: Job, data: unknown): string {
+export async function applyResult(job: Job, data: unknown): Promise<string> {
   const accountId = job.account_id!;
   switch (job.kind) {
     case "video":
     case "design": {
       const plan = data as { notes: string; scenes: { type: string }[] };
       if (!Array.isArray(plan?.scenes) || !plan.scenes.length) throw new Error("The plan has no scenes");
-      db.prepare("UPDATE content SET production = ?, updated_at = datetime('now') WHERE id = ?").run(JSON.stringify(plan), job.ref_id);
+      await sql.run("UPDATE content SET production = ?, updated_at = datetime('now') WHERE id = ?", JSON.stringify(plan), job.ref_id);
       const painted = plan.scenes.filter((s) => s.type === "illustration").length;
       return `${plan.scenes.length} ${job.kind === "video" ? "scenes" : "slides"} planned (${painted} illustrated) — rendering next`;
     }
@@ -57,23 +57,18 @@ export function applyResult(job: Job, data: unknown): string {
     case "strategy": {
       const s = data as Strategy;
       if (!s?.pillars) throw new Error("Strategy output is missing pillars");
-      db.prepare("UPDATE accounts SET strategy = ?, strategy_updated_at = datetime('now') WHERE id = ?").run(
-        JSON.stringify(s),
-        accountId,
-      );
+      await sql.run("UPDATE accounts SET strategy = ?, strategy_updated_at = datetime('now') WHERE id = ?", JSON.stringify(s), accountId);
       return `Strategy ready: ${s.pillars.length} pillars, ${s.cadence?.posts_per_week ?? "?"} posts/week`;
     }
 
     case "trends": {
       const out = data as { scan_notes: string; trends: TrendOut[] };
       if (!Array.isArray(out?.trends)) throw new Error("Trend output is missing the trends list");
-      const ins = db.prepare(
-        `INSERT INTO trends (account_id, job_id, title, summary, source, source_url, momentum, time_sensitivity,
-          fit_score, fit_reason, angle, format, platform, risk_notes)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      );
       for (const t of out.trends) {
-        ins.run(
+        await sql.run(
+          `INSERT INTO trends (account_id, job_id, title, summary, source, source_url, momentum, time_sensitivity,
+            fit_score, fit_reason, angle, format, platform, risk_notes)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           accountId, job.id, t.title, t.what_is_happening, t.source, t.source_url, t.momentum, t.time_sensitivity,
           Math.max(0, Math.min(100, Math.round(t.fit_score))), t.fit_reason, t.angle, t.format, t.platform, t.risk_notes,
         );
@@ -86,27 +81,24 @@ export function applyResult(job: Job, data: unknown): string {
     case "from-trend": {
       const out = data as { notes: string; items: ItemOut[] };
       if (!Array.isArray(out?.items)) throw new Error("Plan output is missing the items list");
-      const trends = q.trends({ accountId, limit: 500 });
+      const trends = await q.trends({ accountId, limit: 500 });
       const findTrend = (title: string) => {
         if (job.kind === "from-trend" && job.ref_id) return job.ref_id;
         const t = title.trim().toLowerCase();
         return t ? (trends.find((x) => x.title.trim().toLowerCase() === t)?.id ?? null) : null;
       };
-      const ins = db.prepare(
-        `INSERT INTO content (account_id, trend_id, job_id, title, pillar, platform, format, video_style, duration_seconds,
-          hook, script, slides, caption, hashtags, cta, audio, suggested_day, planned_date, art_style, rationale, status)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scripted')`,
-      );
-      const markUsed = db.prepare("UPDATE trends SET status = 'used' WHERE id = ?");
       for (const it of out.items) {
         const trendId = findTrend(it.trend_title);
-        ins.run(
+        await sql.run(
+          `INSERT INTO content (account_id, trend_id, job_id, title, pillar, platform, format, video_style, duration_seconds,
+            hook, script, slides, caption, hashtags, cta, audio, suggested_day, planned_date, art_style, rationale, status)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scripted')`,
           accountId, trendId, job.id, it.title, it.pillar, it.platform, it.format, it.video_style,
           Math.round(it.duration_seconds || 0), it.hook, JSON.stringify(it.script ?? []), JSON.stringify(it.slides ?? []),
           it.caption, JSON.stringify((it.hashtags ?? []).map((h) => h.replace(/^#/, ""))), it.cta, it.audio,
           job.target_date ? weekdayShort(job.target_date) : it.suggested_day, job.target_date ?? null, it.art_style ?? "", it.rationale,
         );
-        if (trendId) markUsed.run(trendId);
+        if (trendId) await sql.run("UPDATE trends SET status = 'used' WHERE id = ?", trendId);
       }
       const reels = out.items.filter((i) => i.format === "reel").length;
       const when = job.target_date ? ` for ${prettyDate(job.target_date)}` : "";

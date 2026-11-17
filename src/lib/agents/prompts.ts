@@ -1,13 +1,13 @@
-import { db, q } from "../db";
+import { q, sql } from "../db";
 import type { Account, Job } from "../types";
-import { longDate, weekdayShort } from "../dates";
+import { longDate, TZ, weekdayShort } from "../dates";
 import { ART_STYLES } from "../options";
 
 // Builds the task prompt for each job kind. Built when the job STARTS, not when it is
 // queued, so a "plan" job that follows a "trends" job sees the trends that were just found.
 
 const today = () =>
-  new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: TZ });
 
 function profile(a: Account) {
   return JSON.stringify(
@@ -34,13 +34,15 @@ function profile(a: Account) {
   );
 }
 
-function feedback(accountId: number) {
-  const approved = db
-    .prepare("SELECT title, format, hook FROM content WHERE account_id = ? AND status IN ('approved','producing','review','scheduled','posted') ORDER BY id DESC LIMIT 10")
-    .all(accountId) as { title: string; format: string; hook: string }[];
-  const rejected = db
-    .prepare("SELECT title, format, hook, feedback FROM content WHERE account_id = ? AND status = 'rejected' ORDER BY id DESC LIMIT 10")
-    .all(accountId) as { title: string; format: string; hook: string; feedback: string }[];
+async function feedback(accountId: number) {
+  const approved = await sql.all<{ title: string; format: string; hook: string }>(
+    "SELECT title, format, hook FROM content WHERE account_id = ? AND status IN ('approved','producing','review','ready','scheduled','posted') ORDER BY id DESC LIMIT 10",
+    accountId,
+  );
+  const rejected = await sql.all<{ title: string; format: string; hook: string; feedback: string }>(
+    "SELECT title, format, hook, feedback FROM content WHERE account_id = ? AND status = 'rejected' ORDER BY id DESC LIMIT 10",
+    accountId,
+  );
   if (!approved.length && !rejected.length) return "OWNER FEEDBACK\n(none yet — this is the first batch)";
   return [
     "OWNER FEEDBACK",
@@ -53,10 +55,8 @@ function feedback(accountId: number) {
   ].join("\n");
 }
 
-function recentContent(accountId: number) {
-  const rows = db
-    .prepare("SELECT title FROM content WHERE account_id = ? ORDER BY id DESC LIMIT 40")
-    .all(accountId) as { title: string }[];
+async function recentContent(accountId: number) {
+  const rows = await sql.all<{ title: string }>("SELECT title FROM content WHERE account_id = ? ORDER BY id DESC LIMIT 40", accountId);
   return rows.length ? rows.map((r) => `- ${r.title}`).join("\n") : "(none yet)";
 }
 
@@ -66,9 +66,11 @@ function strategyBlock(a: Account) {
     : "STRATEGY\n(no strategy yet — infer sensible pillars from the profile)";
 }
 
-export function buildPrompt(job: Job): string {
-  const a = job.account_id ? q.account(job.account_id) : null;
+export async function buildPrompt(job: Job): Promise<string> {
+  const a = job.account_id ? await q.account(job.account_id) : null;
   if (!a) throw new Error("Account not found for this job");
+  const fb = await feedback(a.id);
+  const recent = await recentContent(a.id);
 
   switch (job.kind) {
     case "strategy":
@@ -80,16 +82,17 @@ export function buildPrompt(job: Job): string {
         profile(a),
         "",
         a.strategy ? `CURRENT STRATEGY (revise it; keep what still makes sense)\n${JSON.stringify(a.strategy, null, 2)}` : "",
-        feedback(a.id),
+        fb,
         "",
         "Research briefly (3–5 searches) to see what is winning in this niche, then return the strategy as structured output.",
         `The owner has fixed the daily output: ${a.reels_per_day} short video(s) and ${a.posts_per_day} feed post(s) (carousel or single image) EVERY day = ${7 * (a.reels_per_day + a.posts_per_day)} pieces a week. Build the format mix, cadence and best posting times around exactly that. Only use formats from allowed_formats.`,
       ].join("\n");
 
     case "trends": {
-      const seen = db
-        .prepare("SELECT title FROM trends WHERE account_id = ? AND created_at > datetime('now','-21 days') ORDER BY id DESC LIMIT 60")
-        .all(a.id) as { title: string }[];
+      const seen = await sql.all<{ title: string }>(
+        "SELECT title FROM trends WHERE account_id = ? AND created_at > datetime('now','-21 days') ORDER BY id DESC LIMIT 60",
+        a.id,
+      );
       return [
         `Today is ${today()}.`,
         "Scan for what is trending RIGHT NOW that this account could turn into content.",
@@ -114,14 +117,16 @@ export function buildPrompt(job: Job): string {
       const posts = feedFormats.length ? a.posts_per_day : 0;
       const n = reels + posts;
       if (n === 0) throw new Error("This account's daily mix is 0 reels and 0 posts");
-      const sameWeek = db
-        .prepare(
-          "SELECT planned_date, format, title, pillar FROM content WHERE account_id = ? AND planned_date BETWEEN date(?, '-6 days') AND date(?, '+6 days') AND status != 'rejected' ORDER BY planned_date",
-        )
-        .all(a.id, date, date) as { planned_date: string; format: string; title: string; pillar: string }[];
-      const trends = db
-        .prepare("SELECT title, summary, angle, format, fit_score, momentum, time_sensitivity FROM trends WHERE account_id = ? AND status = 'new' AND created_at > datetime('now','-7 days') ORDER BY fit_score DESC LIMIT 12")
-        .all(a.id) as Record<string, string | number>[];
+      const sameWeek = await sql.all<{ planned_date: string; format: string; title: string; pillar: string }>(
+        "SELECT planned_date, format, title, pillar FROM content WHERE account_id = ? AND planned_date BETWEEN date(?, '-6 days') AND date(?, '+6 days') AND status != 'rejected' ORDER BY planned_date",
+        a.id,
+        date,
+        date,
+      );
+      const trends = await sql.all<Record<string, string | number>>(
+        "SELECT title, summary, angle, format, fit_score, momentum, time_sensitivity FROM trends WHERE account_id = ? AND status = 'new' AND created_at > datetime('now','-7 days') ORDER BY fit_score DESC LIMIT 12",
+        a.id,
+      );
       return [
         `Today is ${today()}. You are scripting the posts for ${longDate(date)}.`,
         "",
@@ -144,9 +149,9 @@ export function buildPrompt(job: Job): string {
         sameWeek.length ? sameWeek.map((c) => `- ${c.planned_date} [${c.format}] ${c.title} (${c.pillar})`).join("\n") : "(nothing yet — this is the first day planned)",
         "",
         "OLDER CONTENT (do not repeat)",
-        recentContent(a.id),
+        recent,
         "",
-        feedback(a.id),
+        fb,
         "",
         `Return exactly ${n} items as structured output. Only use allowed_formats and allowed_video_styles. Set suggested_day to ${weekdayShort(date)}.`,
       ].join("\n");
@@ -154,7 +159,7 @@ export function buildPrompt(job: Job): string {
 
     case "video":
     case "design": {
-      const c = job.ref_id ? q.contentItem(job.ref_id) : null;
+      const c = job.ref_id ? await q.contentItem(job.ref_id) : null;
       if (!c) throw new Error("Content item not found for this job");
       const style = ART_STYLES.find((s) => s.id === (c.art_style || a.art_styles[0])) ?? ART_STYLES[0];
       const piece = {
@@ -188,7 +193,7 @@ export function buildPrompt(job: Job): string {
       return "";
 
     case "from-trend": {
-      const t = job.ref_id ? q.trend(job.ref_id) : null;
+      const t = job.ref_id ? await q.trend(job.ref_id) : null;
       if (!t) throw new Error("Trend not found for this job");
       return [
         `Today is ${today()}.`,
@@ -203,9 +208,9 @@ export function buildPrompt(job: Job): string {
         strategyBlock(a),
         "",
         "RECENT CONTENT (do not repeat)",
-        recentContent(a.id),
+        recent,
         "",
-        feedback(a.id),
+        fb,
         "",
         `Return exactly 1 item as structured output, with trend_title set to "${t.title}". You may improve on the suggested angle. If the suggested format is not in allowed_formats, pick the best allowed one.`,
       ].join("\n");

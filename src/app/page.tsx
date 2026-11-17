@@ -2,12 +2,13 @@ import Link from "next/link";
 import { q } from "@/lib/db";
 import { AGENTS, JOB_KINDS } from "@/lib/agents/registry";
 import { runCycle } from "./actions";
-import { CliBanner, SubmitButton } from "@/components/client";
+import { SubmitButton } from "@/components/client";
 import { Badge, Empty, JobStatusBadge, PageHeader, Section, TextLink, timeAgo } from "@/components/ui";
 
-export default function Overview() {
-  const accounts = q.accounts();
-  const jobs = q.jobs({ limit: 8 });
+export default async function Overview() {
+  const accounts = await q.accounts();
+  const counts = new Map(await Promise.all(accounts.map(async (a) => [a.id, await q.counts(a.id)] as const)));
+  const jobs = await q.jobs({ limit: 8 });
 
   return (
     <>
@@ -24,7 +25,6 @@ export default function Overview() {
         further until you approve it.
       </PageHeader>
 
-      <CliBanner />
 
       <Section title="Accounts">
         {accounts.length === 0 ? (
@@ -41,7 +41,7 @@ export default function Overview() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {accounts.map((a) => {
-              const c = q.counts(a.id);
+              const c = counts.get(a.id)!;
               return (
                 <div key={a.id} className="panel flex flex-col p-5">
                   <Link href={`/accounts/${a.id}`} className="group">
@@ -108,7 +108,7 @@ export default function Overview() {
   );
 }
 
-function Stat({ n, label, href, highlight }: { n: number; label: string; href: string; highlight?: boolean }) {
+async function Stat({ n, label, href, highlight }: { n: number; label: string; href: string; highlight?: boolean }) {
   return (
     <Link href={href} className="rounded-lg py-1 transition-colors hover:bg-panel-2">
       <div className={`font-mono text-lg tabular-nums ${highlight ? "text-accent" : "text-fg"}`}>{n}</div>

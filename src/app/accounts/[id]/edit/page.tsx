@@ -7,7 +7,7 @@ import { deleteAccount, updateAccount } from "../../../actions";
 
 export default async function EditAccount({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const a = q.account(Number(id));
+  const a = await q.account(Number(id));
   if (!a) notFound();
   return (
     <>

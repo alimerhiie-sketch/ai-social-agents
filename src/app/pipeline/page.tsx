@@ -19,8 +19,8 @@ const COLUMNS: { status: string; title: string; hint: string; phase?: number }[]
 export default async function Pipeline({ searchParams }: { searchParams: Promise<{ account?: string }> }) {
   const sp = await searchParams;
   const accountId = sp.account ? Number(sp.account) : undefined;
-  const accounts = q.accounts();
-  const items = q.content({ accountId, limit: 500 });
+  const accounts = await q.accounts();
+  const items = await q.content({ accountId, limit: 500 });
   const names = new Map(accounts.map((a) => [a.id, a.name]));
   const rejected = items.filter((i) => i.status === "rejected");
 
@@ -81,7 +81,7 @@ export default async function Pipeline({ searchParams }: { searchParams: Promise
   );
 }
 
-function Card({ it, account }: { it: ContentItem; account: string | null }) {
+async function Card({ it, account }: { it: ContentItem; account: string | null }) {
   return (
     <Link href={`/pipeline/${it.id}`} className="group block rounded-lg border border-line bg-bg p-3 transition-colors hover:border-line-2">
       <div className="flex flex-wrap items-center gap-1">

@@ -17,8 +17,8 @@ export default async function Trends({ searchParams }: { searchParams: Promise<{
   const sp = await searchParams;
   const accountId = sp.account ? Number(sp.account) : undefined;
   const status = sp.status === "used" || sp.status === "dismissed" ? sp.status : "new";
-  const accounts = q.accounts();
-  const trends = q.trends({ accountId, status });
+  const accounts = await q.accounts();
+  const trends = await q.trends({ accountId, status });
   const names = new Map(accounts.map((a) => [a.id, a.name]));
   const scanTarget = accountId ?? (accounts.length === 1 ? accounts[0].id : undefined);
 

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { q } from "@/lib/db";
-import { nowMs } from "@/lib/dates";
-import { lanUrl } from "@/lib/publish/lan";
+import { localDayLabel, localTime, nowMs } from "@/lib/dates";
 import type { Post } from "@/lib/types";
 import { cancelPost, markPosted, postNow, scheduleAllReady } from "../actions";
 import { AccountFilter } from "@/components/account-filter";
@@ -13,19 +12,18 @@ const STATUS_TONE = { scheduled: "neutral", publishing: "accent", posted: "good"
 export default async function Schedule({ searchParams }: { searchParams: Promise<{ account?: string }> }) {
   const sp = await searchParams;
   const accountId = sp.account ? Number(sp.account) : undefined;
-  const accounts = q.accounts();
+  const accounts = await q.accounts();
   const since = new Date(nowMs() - 36 * 3600_000).toISOString();
-  const posts = q.posts({ accountId, from: since, statuses: ["scheduled", "publishing", "posted", "failed"] });
-  const ready = q.content({ accountId, status: "ready", limit: 500 });
+  const posts = await q.posts({ accountId, from: since, statuses: ["scheduled", "publishing", "posted", "failed"] });
+  const ready = await q.content({ accountId, status: "ready", limit: 500 });
   const names = new Map(accounts.map((a) => [a.id, a.name]));
-  const items = new Map(posts.map((p) => [p.content_id, q.contentItem(p.content_id)]));
+  const items = new Map(await Promise.all([...new Set(posts.map((p) => p.content_id))].map(async (id) => [id, await q.contentItem(id)] as const)));
 
   const days = new Map<string, Post[]>();
   for (const p of posts) {
-    const d = new Date(p.scheduled_at).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+    const d = localDayLabel(p.scheduled_at);
     days.set(d, [...(days.get(d) ?? []), p]);
   }
-  const phone = lanUrl();
 
   return (
     <>
@@ -42,17 +40,11 @@ export default async function Schedule({ searchParams }: { searchParams: Promise
           )
         }
       >
-        Instagram posts go out automatically at their time while Agent HQ is running. TikTok posts wait on your{" "}
+        Connected Instagram accounts post automatically at their time (checked every 5 minutes, in the cloud). Everything else waits on your{" "}
         <Link href="/post" className="text-fg underline decoration-line-2 underline-offset-4">
           phone page
         </Link>
-        {phone && (
-          <>
-            {" "}
-            — open <span className="font-mono text-fg">{phone}</span> on your phone (same Wi-Fi)
-          </>
-        )}
-        .
+        , which works from anywhere: open this dashboard on your phone and log in once.
       </PageHeader>
 
       <AccountFilter accounts={accounts} current={accountId} base="/schedule" />
@@ -69,7 +61,7 @@ export default async function Schedule({ searchParams }: { searchParams: Promise
                 return (
                   <div key={p.id} className="flex flex-col gap-3 px-4 py-3 md:flex-row md:items-center">
                     <div className="w-14 shrink-0 font-mono text-sm tabular-nums text-fg">
-                      {new Date(p.scheduled_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}
+                      {localTime(p.scheduled_at)}
                     </div>
                     <div className="flex shrink-0 gap-1.5">
                       <Badge tone="info">{p.platform === "instagram" ? "IG" : "TikTok"}</Badge>

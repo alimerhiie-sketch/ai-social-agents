@@ -1,185 +1,92 @@
-import { DatabaseSync } from "node:sqlite";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 import type { Account, Connection, ContentItem, Job, Post, Trend } from "./types";
 
-// Data lives outside the OneDrive-synced Documents folder: OneDrive holds handles on
-// freshly written files, which is poison for a live SQLite database.
-export const DATA_DIR =
-  process.env.HQ_DATA_DIR ||
-  path.join(process.env.LOCALAPPDATA || path.join(os.homedir(), ".local", "share"), "ai-social-agents");
-export const LOG_DIR = path.join(DATA_DIR, "logs");
+// One async SQL interface, two backends:
+//  - Cloudflare D1 binding (the dashboard and cron inside the Worker)
+//  - the Worker's private /api/internal/sql endpoint (the GitHub Actions runner, via HQ_URL + HQ_SECRET)
+// Every query in the app goes through `sql`, so the same code runs in both places.
 
-const SCHEMA = `
-CREATE TABLE IF NOT EXISTS accounts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  niche TEXT NOT NULL DEFAULT '',
-  description TEXT NOT NULL DEFAULT '',
-  audience TEXT NOT NULL DEFAULT '',
-  language TEXT NOT NULL DEFAULT 'English',
-  platforms TEXT NOT NULL DEFAULT '["instagram","tiktok"]',
-  ig_handle TEXT NOT NULL DEFAULT '',
-  tiktok_handle TEXT NOT NULL DEFAULT '',
-  tones TEXT NOT NULL DEFAULT '[]',
-  formats TEXT NOT NULL DEFAULT '[]',
-  video_styles TEXT NOT NULL DEFAULT '[]',
-  posts_per_week INTEGER NOT NULL DEFAULT 5,
-  approval_mode TEXT NOT NULL DEFAULT 'manual',
-  brand_colors TEXT NOT NULL DEFAULT '[]',
-  avoid TEXT NOT NULL DEFAULT '',
-  inspiration TEXT NOT NULL DEFAULT '',
-  strategy TEXT,
-  strategy_updated_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+type Arg = string | number | null | boolean | undefined;
+export type RunResult = { changes: number; lastRowId: number };
 
-CREATE TABLE IF NOT EXISTS trends (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  job_id INTEGER,
-  title TEXT NOT NULL,
-  summary TEXT NOT NULL DEFAULT '',
-  source TEXT NOT NULL DEFAULT '',
-  source_url TEXT NOT NULL DEFAULT '',
-  momentum TEXT NOT NULL DEFAULT '',
-  time_sensitivity TEXT NOT NULL DEFAULT '',
-  fit_score INTEGER NOT NULL DEFAULT 0,
-  fit_reason TEXT NOT NULL DEFAULT '',
-  angle TEXT NOT NULL DEFAULT '',
-  format TEXT NOT NULL DEFAULT '',
-  platform TEXT NOT NULL DEFAULT '',
-  risk_notes TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'new',
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS content (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  trend_id INTEGER REFERENCES trends(id) ON DELETE SET NULL,
-  job_id INTEGER,
-  title TEXT NOT NULL,
-  pillar TEXT NOT NULL DEFAULT '',
-  platform TEXT NOT NULL DEFAULT '',
-  format TEXT NOT NULL DEFAULT '',
-  video_style TEXT NOT NULL DEFAULT '',
-  duration_seconds INTEGER NOT NULL DEFAULT 0,
-  hook TEXT NOT NULL DEFAULT '',
-  script TEXT NOT NULL DEFAULT '[]',
-  slides TEXT NOT NULL DEFAULT '[]',
-  caption TEXT NOT NULL DEFAULT '',
-  hashtags TEXT NOT NULL DEFAULT '[]',
-  cta TEXT NOT NULL DEFAULT '',
-  audio TEXT NOT NULL DEFAULT '',
-  suggested_day TEXT NOT NULL DEFAULT '',
-  rationale TEXT NOT NULL DEFAULT '',
-  status TEXT NOT NULL DEFAULT 'scripted',
-  feedback TEXT NOT NULL DEFAULT '',
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
-CREATE TABLE IF NOT EXISTS jobs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  kind TEXT NOT NULL,
-  agent TEXT NOT NULL,
-  account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
-  ref_id INTEGER,
-  depends_on INTEGER,
-  status TEXT NOT NULL DEFAULT 'queued',
-  model TEXT,
-  summary TEXT,
-  error TEXT,
-  cost_usd REAL,
-  duration_ms INTEGER,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  started_at TEXT,
-  finished_at TEXT
-);
-
--- One row per platform a piece goes to: Instagram is posted by the API, TikTok handed to your phone.
-CREATE TABLE IF NOT EXISTS posts (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  content_id INTEGER NOT NULL REFERENCES content(id) ON DELETE CASCADE,
-  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  platform TEXT NOT NULL,
-  method TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'scheduled',
-  scheduled_at TEXT NOT NULL,
-  posted_at TEXT,
-  remote_id TEXT,
-  permalink TEXT,
-  error TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
-
--- Platform logins per account (tokens stay on this PC).
-CREATE TABLE IF NOT EXISTS connections (
-  account_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-  platform TEXT NOT NULL,
-  remote_user_id TEXT NOT NULL,
-  username TEXT NOT NULL DEFAULT '',
-  token TEXT NOT NULL,
-  expires_at TEXT,
-  refreshed_at TEXT,
-  PRIMARY KEY (account_id, platform)
-);
-
-CREATE TABLE IF NOT EXISTS settings (
-  key TEXT PRIMARY KEY,
-  value TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_trends_account ON trends(account_id, status);
-CREATE INDEX IF NOT EXISTS idx_content_account ON content(account_id, status);
-CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
-CREATE INDEX IF NOT EXISTS idx_posts_when ON posts(status, scheduled_at);
-`;
-
-function open(): DatabaseSync {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
-  const d = new DatabaseSync(path.join(DATA_DIR, "hq.db"));
-  d.exec("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
-  d.exec(SCHEMA);
-  // Migrations: which server process owns a running job, and the agent's own process id.
-  // Daily mix per account, and per-day planning (jobs.target_date → content.planned_date).
-  const migrations: [string, string][] = [
-    ["jobs", "runner_pid INTEGER"],
-    ["jobs", "child_pid INTEGER"],
-    ["jobs", "target_date TEXT"],
-    ["accounts", "reels_per_day INTEGER NOT NULL DEFAULT 1"],
-    ["accounts", "posts_per_day INTEGER NOT NULL DEFAULT 0"],
-    ["content", "planned_date TEXT"],
-    ["accounts", "art_styles TEXT NOT NULL DEFAULT '[]'"],
-    ["accounts", "character TEXT NOT NULL DEFAULT ''"],
-    ["content", "art_style TEXT NOT NULL DEFAULT ''"],
-    ["content", "production TEXT"],
-    ["content", "media TEXT"],
-    ["jobs", "not_before TEXT"],
-    ["accounts", "reel_times TEXT NOT NULL DEFAULT '13:00, 20:00'"],
-    ["accounts", "post_times TEXT NOT NULL DEFAULT '09:30, 17:30'"],
-    ["accounts", "ai_disclosure TEXT NOT NULL DEFAULT 'Illustrated with AI.'"],
-  ];
-  for (const [table, col] of migrations) {
-    try {
-      d.exec(`ALTER TABLE ${table} ADD COLUMN ${col}`);
-    } catch {
-      /* already there */
-    }
-  }
-  return d;
+export interface Sql {
+  all<T = Row>(query: string, ...args: Arg[]): Promise<T[]>;
+  get<T = Row>(query: string, ...args: Arg[]): Promise<T | null>;
+  run(query: string, ...args: Arg[]): Promise<RunResult>;
 }
 
-const g = globalThis as unknown as { __hqDb?: DatabaseSync };
-export const db: DatabaseSync = (g.__hqDb ??= open());
+const clean = (args: Arg[]) => args.map((a) => (a === undefined ? null : typeof a === "boolean" ? (a ? 1 : 0) : a));
+
+// ---------- backend 1: D1 binding ----------
+
+type D1Like = {
+  prepare(q: string): {
+    bind(...a: unknown[]): {
+      all(): Promise<{ results: unknown[] }>;
+      first(): Promise<unknown>;
+      run(): Promise<{ meta: { changes?: number; last_row_id?: number } }>;
+    };
+  };
+};
+
+let pinned: D1Like | null = null;
+/** The cron handler passes env.DB directly (no request context there). */
+export function pinD1(d1: D1Like) {
+  pinned = d1;
+}
+
+async function d1(): Promise<D1Like> {
+  if (pinned) return pinned;
+  const { getCloudflareContext } = await import("@opennextjs/cloudflare");
+  const { env } = await getCloudflareContext({ async: true });
+  return (env as unknown as { DB: D1Like }).DB;
+}
+
+const d1Sql: Sql = {
+  async all(query, ...args) {
+    const r = await (await d1()).prepare(query).bind(...clean(args)).all();
+    return r.results as never[];
+  },
+  async get(query, ...args) {
+    return ((await (await d1()).prepare(query).bind(...clean(args)).first()) ?? null) as never;
+  },
+  async run(query, ...args) {
+    const r = await (await d1()).prepare(query).bind(...clean(args)).run();
+    return { changes: r.meta.changes ?? 0, lastRowId: r.meta.last_row_id ?? 0 };
+  },
+};
+
+// ---------- backend 2: HTTP to the Worker (GitHub Actions runner) ----------
+
+async function remote(mode: "all" | "get" | "run", query: string, args: Arg[]) {
+  const res = await fetch(`${process.env.HQ_URL}/api/internal/sql`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${process.env.HQ_SECRET}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ mode, query, args: clean(args) }),
+  });
+  if (!res.ok) throw new Error(`HQ sql ${res.status}: ${(await res.text()).slice(0, 300)}`);
+  return (await res.json()) as { result: unknown };
+}
+
+const httpSql: Sql = {
+  async all(query, ...args) {
+    return (await remote("all", query, args)).result as never[];
+  },
+  async get(query, ...args) {
+    return ((await remote("get", query, args)).result ?? null) as never;
+  },
+  async run(query, ...args) {
+    return (await remote("run", query, args)).result as RunResult;
+  },
+};
+
+export const sql: Sql = typeof process !== "undefined" && process.env?.HQ_URL && process.env?.HQ_SECRET ? httpSql : d1Sql;
+
+/** Used by the internal endpoint to execute a runner's query on D1. */
+export const sqlOnD1 = d1Sql;
 
 // ---------- row mappers ----------
 
-type Row = Record<string, unknown>;
-// node:sqlite returns null-prototype rows, which React refuses to pass to client components.
-const plain = <T extends object | undefined>(r: T): T => (r ? ({ ...r } as T) : r);
+export type Row = Record<string, unknown>;
 const arr = <T = string>(v: unknown): T[] => {
   try {
     const p = JSON.parse(String(v ?? "[]"));
@@ -198,10 +105,6 @@ const obj = <T,>(v: unknown): T | null => {
 };
 
 export function toAccount(r: Row): Account {
-  let strategy = null;
-  try {
-    strategy = r.strategy ? JSON.parse(String(r.strategy)) : null;
-  } catch {}
   return {
     ...(r as unknown as Account),
     platforms: arr(r.platforms),
@@ -210,7 +113,7 @@ export function toAccount(r: Row): Account {
     video_styles: arr(r.video_styles),
     brand_colors: arr(r.brand_colors),
     art_styles: arr(r.art_styles),
-    strategy,
+    strategy: obj(r.strategy),
   };
 }
 
@@ -225,111 +128,96 @@ export function toContent(r: Row): ContentItem {
   };
 }
 
+const where = (parts: [boolean, string, ...Arg[]][]) => {
+  const used = parts.filter((p) => p[0]);
+  return {
+    clause: used.length ? "WHERE " + used.map((p) => p[1]).join(" AND ") : "",
+    args: used.flatMap((p) => p.slice(2) as Arg[]),
+  };
+};
+
 // ---------- queries ----------
 
 export const q = {
-  accounts(): Account[] {
-    return db.prepare("SELECT * FROM accounts ORDER BY id").all().map(toAccount);
+  async accounts(): Promise<Account[]> {
+    return (await sql.all("SELECT * FROM accounts ORDER BY id")).map(toAccount);
   },
-  account(id: number): Account | null {
-    const r = db.prepare("SELECT * FROM accounts WHERE id = ?").get(id);
+  async account(id: number): Promise<Account | null> {
+    const r = await sql.get("SELECT * FROM accounts WHERE id = ?", id);
     return r ? toAccount(r) : null;
   },
-  trends(opts: { accountId?: number; status?: string; limit?: number } = {}): Trend[] {
-    const where: string[] = [];
-    const args: (string | number)[] = [];
-    if (opts.accountId) {
-      where.push("account_id = ?");
-      args.push(opts.accountId);
-    }
-    if (opts.status) {
-      where.push("status = ?");
-      args.push(opts.status);
-    }
-    const sql = `SELECT * FROM trends ${where.length ? "WHERE " + where.join(" AND ") : ""}
-      ORDER BY date(created_at) DESC, fit_score DESC, id DESC LIMIT ${opts.limit ?? 200}`;
-    return db.prepare(sql).all(...args).map(plain) as unknown as Trend[];
+  async trends(opts: { accountId?: number; status?: string; limit?: number } = {}): Promise<Trend[]> {
+    const w = where([
+      [!!opts.accountId, "account_id = ?", opts.accountId],
+      [!!opts.status, "status = ?", opts.status],
+    ]);
+    return sql.all<Trend>(
+      `SELECT * FROM trends ${w.clause} ORDER BY date(created_at) DESC, fit_score DESC, id DESC LIMIT ${opts.limit ?? 200}`,
+      ...w.args,
+    );
   },
-  trend(id: number): Trend | null {
-    return (plain(db.prepare("SELECT * FROM trends WHERE id = ?").get(id)) as unknown as Trend) ?? null;
+  async trend(id: number): Promise<Trend | null> {
+    return sql.get<Trend>("SELECT * FROM trends WHERE id = ?", id);
   },
-  content(opts: { accountId?: number; status?: string; limit?: number } = {}): ContentItem[] {
-    const where: string[] = [];
-    const args: (string | number)[] = [];
-    if (opts.accountId) {
-      where.push("account_id = ?");
-      args.push(opts.accountId);
-    }
-    if (opts.status) {
-      where.push("status = ?");
-      args.push(opts.status);
-    }
-    const sql = `SELECT * FROM content ${where.length ? "WHERE " + where.join(" AND ") : ""}
-      ORDER BY planned_date IS NULL, planned_date, id LIMIT ${opts.limit ?? 300}`;
-    return db.prepare(sql).all(...args).map(toContent);
+  async content(opts: { accountId?: number; status?: string; limit?: number } = {}): Promise<ContentItem[]> {
+    const w = where([
+      [!!opts.accountId, "account_id = ?", opts.accountId],
+      [!!opts.status, "status = ?", opts.status],
+    ]);
+    return (await sql.all(`SELECT * FROM content ${w.clause} ORDER BY planned_date IS NULL, planned_date, id LIMIT ${opts.limit ?? 300}`, ...w.args)).map(
+      toContent,
+    );
   },
-  contentItem(id: number): ContentItem | null {
-    const r = db.prepare("SELECT * FROM content WHERE id = ?").get(id);
+  async contentItem(id: number): Promise<ContentItem | null> {
+    const r = await sql.get("SELECT * FROM content WHERE id = ?", id);
     return r ? toContent(r) : null;
   },
-  jobs(opts: { accountId?: number; limit?: number } = {}): Job[] {
-    const sql = opts.accountId
-      ? `SELECT * FROM jobs WHERE account_id = ? ORDER BY id DESC LIMIT ${opts.limit ?? 50}`
-      : `SELECT * FROM jobs ORDER BY id DESC LIMIT ${opts.limit ?? 50}`;
-    const rows = opts.accountId ? db.prepare(sql).all(opts.accountId) : db.prepare(sql).all();
-    return rows.map(plain) as unknown as Job[];
+  async jobs(opts: { accountId?: number; limit?: number } = {}): Promise<Job[]> {
+    return opts.accountId
+      ? sql.all<Job>(`SELECT * FROM jobs WHERE account_id = ? ORDER BY id DESC LIMIT ${opts.limit ?? 50}`, opts.accountId)
+      : sql.all<Job>(`SELECT * FROM jobs ORDER BY id DESC LIMIT ${opts.limit ?? 50}`);
   },
-  job(id: number): Job | null {
-    return (plain(db.prepare("SELECT * FROM jobs WHERE id = ?").get(id)) as unknown as Job) ?? null;
+  async job(id: number): Promise<Job | null> {
+    return sql.get<Job>("SELECT * FROM jobs WHERE id = ?", id);
   },
-  activeJobs(): Job[] {
-    return db
-      .prepare("SELECT * FROM jobs WHERE status IN ('queued','running') ORDER BY id")
-      .all()
-      .map(plain) as unknown as Job[];
+  async activeJobs(): Promise<Job[]> {
+    return sql.all<Job>("SELECT * FROM jobs WHERE status IN ('queued','running') ORDER BY id");
   },
-  setting(key: string, fallback: string): string {
-    const r = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as { value: string } | undefined;
+  async setting(key: string, fallback: string): Promise<string> {
+    const r = await sql.get<{ value: string }>("SELECT value FROM settings WHERE key = ?", key);
     return r?.value ?? fallback;
   },
-  setSetting(key: string, value: string) {
-    db.prepare(
-      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-    ).run(key, value);
+  async setSetting(key: string, value: string) {
+    await sql.run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value);
   },
-  posts(opts: { accountId?: number; from?: string; to?: string; statuses?: string[]; method?: string } = {}): Post[] {
-    const where: string[] = [];
-    const args: (string | number)[] = [];
-    const add = (clause: string, ...vals: (string | number)[]) => {
-      where.push(clause);
-      args.push(...vals);
-    };
-    if (opts.accountId) add("account_id = ?", opts.accountId);
-    if (opts.from) add("scheduled_at >= ?", opts.from);
-    if (opts.to) add("scheduled_at < ?", opts.to);
-    if (opts.method) add("method = ?", opts.method);
-    if (opts.statuses?.length) add(`status IN (${opts.statuses.map(() => "?").join(",")})`, ...opts.statuses);
-    return db
-      .prepare(`SELECT * FROM posts ${where.length ? "WHERE " + where.join(" AND ") : ""} ORDER BY scheduled_at, id LIMIT 500`)
-      .all(...args)
-      .map(plain) as unknown as Post[];
+  async posts(opts: { accountId?: number; from?: string; to?: string; statuses?: string[]; method?: string } = {}): Promise<Post[]> {
+    const w = where([
+      [!!opts.accountId, "account_id = ?", opts.accountId],
+      [!!opts.from, "scheduled_at >= ?", opts.from],
+      [!!opts.to, "scheduled_at < ?", opts.to],
+      [!!opts.method, "method = ?", opts.method],
+      [!!opts.statuses?.length, `status IN (${(opts.statuses ?? []).map(() => "?").join(",")})`, ...(opts.statuses ?? [])],
+    ]);
+    return sql.all<Post>(`SELECT * FROM posts ${w.clause} ORDER BY scheduled_at, id LIMIT 500`, ...w.args);
   },
-  postsFor(contentId: number): Post[] {
-    return db.prepare("SELECT * FROM posts WHERE content_id = ? ORDER BY platform").all(contentId).map(plain) as unknown as Post[];
+  async postsFor(contentId: number): Promise<Post[]> {
+    return sql.all<Post>("SELECT * FROM posts WHERE content_id = ? ORDER BY platform", contentId);
   },
-  post(id: number): Post | null {
-    return (plain(db.prepare("SELECT * FROM posts WHERE id = ?").get(id)) as unknown as Post) ?? null;
+  async post(id: number): Promise<Post | null> {
+    return sql.get<Post>("SELECT * FROM posts WHERE id = ?", id);
   },
-  connection(accountId: number, platform: string): Connection | null {
-    return (plain(db.prepare("SELECT * FROM connections WHERE account_id = ? AND platform = ?").get(accountId, platform)) as unknown as Connection) ?? null;
+  async connection(accountId: number, platform: string): Promise<Connection | null> {
+    return sql.get<Connection>("SELECT * FROM connections WHERE account_id = ? AND platform = ?", accountId, platform);
   },
-  counts(accountId: number) {
-    const c = (sql: string) => (db.prepare(sql).get(accountId) as { n: number }).n;
-    return {
-      newTrends: c("SELECT COUNT(*) n FROM trends WHERE account_id = ? AND status = 'new'"),
-      scripted: c("SELECT COUNT(*) n FROM content WHERE account_id = ? AND status = 'scripted'"),
-      approved: c("SELECT COUNT(*) n FROM content WHERE account_id = ? AND status = 'approved'"),
-      posted: c("SELECT COUNT(*) n FROM content WHERE account_id = ? AND status = 'posted'"),
-    };
+  async counts(accountId: number) {
+    const r = await sql.get<{ newTrends: number; scripted: number; approved: number; posted: number }>(
+      `SELECT
+        (SELECT COUNT(*) FROM trends WHERE account_id = ?1 AND status = 'new') AS newTrends,
+        (SELECT COUNT(*) FROM content WHERE account_id = ?1 AND status = 'scripted') AS scripted,
+        (SELECT COUNT(*) FROM content WHERE account_id = ?1 AND status = 'approved') AS approved,
+        (SELECT COUNT(*) FROM content WHERE account_id = ?1 AND status = 'posted') AS posted`,
+      accountId,
+    );
+    return r ?? { newTrends: 0, scripted: 0, approved: 0, posted: 0 };
   },
 };

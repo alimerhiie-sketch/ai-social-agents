@@ -4,16 +4,16 @@ import { q } from "@/lib/db";
 import { FORMATS, VIDEO_STYLES } from "@/lib/options";
 import type { Strategy } from "@/lib/types";
 import { connectInstagram, disconnect, runCycle, runJob, runPlanWeek } from "../../actions";
-import { CliBanner, CopyButton, SubmitButton } from "@/components/client";
+import { CopyButton, SubmitButton } from "@/components/client";
 import { Badge, Empty, FormatBadge, PageHeader, Section, TextLink, timeAgo } from "@/components/ui";
 
 export default async function AccountPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const a = q.account(Number(id));
+  const a = await q.account(Number(id));
   if (!a) notFound();
-  const c = q.counts(a.id);
-  const trends = q.trends({ accountId: a.id, status: "new", limit: 4 });
-  const content = q.content({ accountId: a.id, limit: 6 });
+  const c = await q.counts(a.id);
+  const trends = await q.trends({ accountId: a.id, status: "new", limit: 4 });
+  const content = await q.content({ accountId: a.id, limit: 6 });
   const label = (list: { id: string; label: string }[], ids: string[]) => ids.map((i) => list.find((x) => x.id === i)?.label ?? i);
 
   return (
@@ -37,7 +37,6 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
         {a.niche}
       </PageHeader>
 
-      <CliBanner />
 
       <div className="mb-10 grid gap-3 md:grid-cols-3">
         <ActionCard
@@ -110,7 +109,7 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
   );
 }
 
-function ActionCard({ title, body, action, label, agent }: { title: string; body: string; action: () => Promise<void>; label: string; agent: string }) {
+async function ActionCard({ title, body, action, label, agent }: { title: string; body: string; action: () => Promise<void>; label: string; agent: string }) {
   return (
     <div className="panel flex flex-col p-5">
       <div className="eyebrow">{agent}</div>
@@ -125,7 +124,7 @@ function ActionCard({ title, body, action, label, agent }: { title: string; body
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+async function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-line px-4 py-3">
       <div className="eyebrow">{label}</div>
@@ -134,7 +133,7 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StrategyView({ s }: { s: Strategy }) {
+async function StrategyView({ s }: { s: Strategy }) {
   return (
     <Section title="Strategy">
       <div className="space-y-3">
@@ -237,7 +236,7 @@ function StrategyView({ s }: { s: Strategy }) {
   );
 }
 
-function List({ items, mark, tone }: { items: string[]; mark: string; tone: string }) {
+async function List({ items, mark, tone }: { items: string[]; mark: string; tone: string }) {
   return (
     <ul className="space-y-2">
       {items.map((it, i) => (
@@ -250,9 +249,9 @@ function List({ items, mark, tone }: { items: string[]; mark: string; tone: stri
   );
 }
 
-function Connections({ accountId, igHandle }: { accountId: number; igHandle: string }) {
-  const ig = q.connection(accountId, "instagram");
-  const err = q.setting(`connect-error:${accountId}`, "");
+async function Connections({ accountId, igHandle }: { accountId: number; igHandle: string }) {
+  const ig = await q.connection(accountId, "instagram");
+  const err = await q.setting(`connect-error:${accountId}`, "");
   return (
     <Section title="Connections">
       <div className="grid gap-3 md:grid-cols-2">
@@ -265,7 +264,7 @@ function Connections({ accountId, igHandle }: { accountId: number; igHandle: str
             <>
               <p className="mt-2 text-[13px] text-muted">
                 Connected as <span className="text-fg">@{ig.username}</span>. The Publisher posts scheduled pieces automatically and keeps the
-                token refreshed{ig.expires_at ? ` (currently valid until ${new Date(ig.expires_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })})` : ""}.
+                token refreshed{ig.expires_at ? ` (currently valid until ${new Date(ig.expires_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Asia/Beirut" })})` : ""}.
               </p>
               <form action={disconnect.bind(null, accountId, "instagram")} className="mt-3">
                 <SubmitButton className="btn btn-ghost btn-sm">Disconnect</SubmitButton>

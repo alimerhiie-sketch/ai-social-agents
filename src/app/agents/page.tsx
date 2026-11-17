@@ -1,16 +1,18 @@
 import Link from "next/link";
 import { q } from "@/lib/db";
 import { AGENTS, JOB_KINDS } from "@/lib/agents/registry";
-import { modelFor } from "@/lib/agents/runner";
+import { modelFor } from "@/lib/queue";
 import { MODELS } from "@/lib/options";
 import { cancelJob, setAgentModel } from "../actions";
-import { CliBanner, SubmitButton } from "@/components/client";
+import { SubmitButton } from "@/components/client";
 import { Badge, duration, JobStatusBadge, PageHeader, Section, timeAgo } from "@/components/ui";
-import { prettyDate } from "@/lib/dates";
+import { localTime, prettyDate } from "@/lib/dates";
 
-export default function Agents() {
-  const jobs = q.jobs({ limit: 60 });
-  const names = new Map(q.accounts().map((a) => [a.id, a.name]));
+export default async function Agents() {
+  const jobs = await q.jobs({ limit: 60 });
+  const names = new Map((await q.accounts()).map((a) => [a.id, a.name]));
+  const models: Record<string, string> = Object.fromEntries(await Promise.all(AGENTS.map(async (ag) => [ag.id, await modelFor(ag.id)] as const)));
+  models["strategist:scripts"] = await modelFor("strategist", "plan");
 
   return (
     <>
@@ -20,7 +22,6 @@ export default function Agents() {
         more of your limit.
       </PageHeader>
 
-      <CliBanner />
 
       <Section title="Agents">
         <div className="panel divide-y divide-line">
@@ -36,8 +37,8 @@ export default function Agents() {
               </div>
               {ag.status === "active" && (
                 <div className="flex flex-col gap-2">
-                  <ModelPicker settingKey={`model:${ag.id}`} current={modelFor(ag.id)} label={ag.id === "strategist" ? "Strategy" : undefined} />
-                  {ag.id === "strategist" && <ModelPicker settingKey={`model:${ag.id}:scripts`} current={modelFor(ag.id, "plan")} label="Daily scripts" />}
+                  <ModelPicker settingKey={`model:${ag.id}`} current={models[ag.id]} label={ag.id === "strategist" ? "Strategy" : undefined} />
+                  {ag.id === "strategist" && <ModelPicker settingKey={`model:${ag.id}:scripts`} current={models["strategist:scripts"]} label="Daily scripts" />}
                 </div>
               )}
             </div>
@@ -84,7 +85,7 @@ export default function Agents() {
                     <td className="px-4 py-3 text-muted">{j.account_id ? names.get(j.account_id) : "—"}</td>
                     <td className="max-w-[280px] truncate px-4 py-3 text-muted" title={j.summary ?? j.error ?? ""}>
                       {j.status === "queued" && j.not_before
-                        ? `Waits until ${new Date(j.not_before).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`
+                        ? `Waits until ${localTime(j.not_before)}`
                         : (j.summary ?? (j.error ? <span className={j.error.startsWith("Paused") ? "text-warn" : "text-bad"}>{j.error}</span> : "—"))}
                     </td>
                     <td className="px-4 py-3 text-muted">{j.model ?? "—"}</td>
@@ -110,7 +111,7 @@ export default function Agents() {
   );
 }
 
-function ModelPicker({ settingKey, current, label }: { settingKey: string; current: string; label?: string }) {
+async function ModelPicker({ settingKey, current, label }: { settingKey: string; current: string; label?: string }) {
   return (
     <form action={setAgentModel.bind(null, settingKey)} className="flex items-center gap-2">
       {label && <span className="w-24 text-right text-xs text-dim">{label}</span>}
