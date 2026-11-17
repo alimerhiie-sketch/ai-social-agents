@@ -162,7 +162,10 @@ async function renderReel(serveUrl) {
       composition,
       serveUrl,
       codec: "h264",
-      crf: 18,
+      // Delivery quality: Instagram/TikTok re-encode to ~3–5 Mbps anyway, and cloud storage caps files at 25 MB.
+      crf: 21,
+      encodingMaxRate: "4500k",
+      encodingBufferSize: "9000k",
       outputLocation: output,
       inputProps,
       onProgress: ({ progress }) => {
