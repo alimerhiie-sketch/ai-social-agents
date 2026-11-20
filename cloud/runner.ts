@@ -85,7 +85,17 @@ async function finish(job: Job, status: "done" | "failed", summary: string | nul
   );
 }
 
-const contentBack = (id: number) => sql.run("UPDATE content SET status = 'approved', updated_at = datetime('now') WHERE id = ? AND status = 'producing'", id);
+/** True when the piece already has posts waiting to go out (a re-render of something already scheduled). */
+const hasScheduledPosts = async (id: number) =>
+  !!(await sql.get<{ n: number }>("SELECT COUNT(*) n FROM posts WHERE content_id = ? AND status IN ('scheduled','publishing')", id))?.n;
+
+/** Back to the queue it came from: a scheduled piece stays scheduled (its old video is still in place). */
+const contentBack = async (id: number) =>
+  sql.run(
+    "UPDATE content SET status = ?, updated_at = datetime('now') WHERE id = ? AND status = 'producing'",
+    (await hasScheduledPosts(id)) ? "scheduled" : "approved",
+    id,
+  );
 
 /** Runs a child process, killing it if the job is cancelled from the dashboard or times out. */
 function supervise(job: Job, child: ChildProcess, timeoutMs: number): Promise<number | null> {
@@ -291,9 +301,12 @@ async function runRender(job: Job) {
     for (const f of files) await upload(`${rel}/${f}`, path.join(work, f));
     if (charRef && fs.existsSync(charRef)) await upload(`account-${a.id}/character-${charHash}.jpg`, charRef).catch(() => {});
     const media = { kind: r.kind, files: r.files, cover: r.cover, durationSeconds: r.durationSeconds, dir: rel };
-    await sql.run("UPDATE content SET media = ?, status = 'review', updated_at = datetime('now') WHERE id = ?", JSON.stringify(media), c.id);
+    // A re-render of a piece that is already scheduled replaces its video and keeps its slot (no second review,
+    // which would schedule it twice); anything else waits for your final review.
+    const keep = await hasScheduledPosts(c.id);
+    await sql.run("UPDATE content SET media = ?, status = ?, updated_at = datetime('now') WHERE id = ?", JSON.stringify(media), keep ? "scheduled" : "review", c.id);
     const what = r.kind === "reel" ? `${Number(r.durationSeconds).toFixed(0)}s video` : `${(r.files ?? []).length} slide(s)`;
-    const summary = `Rendered ${what} — waiting for your final review`;
+    const summary = keep ? `Re-rendered ${what} — replaces the scheduled one, same slot` : `Rendered ${what} — waiting for your final review`;
     await log(job.id, `✓ ${summary}`);
     return finish(job, "done", summary, null, started);
   }
