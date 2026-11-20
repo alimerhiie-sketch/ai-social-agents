@@ -3,8 +3,9 @@ import { isoDate, todayLocal, TZ } from "./dates";
 import { captionFor, nextSlot } from "./publish/schedule";
 import * as graph from "./publish/instagram";
 import * as composio from "./publish/composio";
+import * as tiktok from "./publish/tiktok";
 import type { IgMedia } from "./publish/instagram";
-import type { Connection } from "./types";
+import type { Connection, Post } from "./types";
 import { signedMediaUrl } from "./auth";
 import { enqueueCycle, enqueueProduce, markContentPostedIfDone, pinEnv, wakeRunner, type HqEnv } from "./queue";
 
@@ -46,22 +47,23 @@ async function publishDue(): Promise<string[]> {
   const origin = await q.setting("public_url", "");
   if (!origin) return ["publish: waiting for the dashboard's public URL (open the dashboard once)"];
   const now = new Date().toISOString();
-  const due = await sql.all<{ id: number; content_id: number; account_id: number; status: string; scheduled_at: string; container_id: string | null; container_at: string | null }>(
-    `SELECT id, content_id, account_id, status, scheduled_at, container_id, container_at FROM posts
-     WHERE method = 'api' AND platform = 'instagram' AND scheduled_at <= ? AND status IN ('scheduled','publishing')
+  const due = await sql.all<Post & { container_id: string | null; container_at: string | null }>(
+    `SELECT * FROM posts
+     WHERE method = 'api' AND platform IN ('instagram','tiktok') AND scheduled_at <= ? AND status IN ('scheduled','publishing')
      ORDER BY scheduled_at LIMIT 5`,
     now,
   );
   const out: string[] = [];
   for (const p of due) {
+    const label = p.platform === "tiktok" ? "TikTok" : "Instagram";
     try {
       const c = await q.contentItem(p.content_id);
       const a = await q.account(p.account_id);
       if (!c?.media || !a) throw new Error("The piece or its media is missing");
-      let conn = await q.connection(a.id, "instagram");
-      if (!conn) throw new Error("Instagram isn't connected for this account");
+      let conn = await q.connection(a.id, p.platform);
+      if (!conn) throw new Error(`${label} isn't connected for this account`);
 
-      if (conn.provider !== "composio" && Date.now() - new Date(conn.refreshed_at ?? 0).getTime() > 7 * 86400_000) {
+      if (p.platform === "instagram" && conn.provider !== "composio" && Date.now() - new Date(conn.refreshed_at ?? 0).getTime() > 7 * 86400_000) {
         try {
           const r = await graph.refreshToken(conn.token);
           await sql.run(
@@ -74,7 +76,7 @@ async function publishDue(): Promise<string[]> {
           conn = (await q.connection(a.id, "instagram"))!;
         } catch {}
       }
-      const ig = publisher(conn);
+      const pub = publisher(conn, p, c.media.kind === "reel");
 
       if (!p.container_id) {
         if (Date.now() - new Date(p.scheduled_at).getTime() > MAX_LATE_MS)
@@ -87,30 +89,32 @@ async function publishDue(): Promise<string[]> {
             : m.files.length === 1
               ? { kind: "image", image: await url(m.files[0]) }
               : { kind: "carousel", images: await Promise.all(m.files.map(url)) };
-        const id = await ig.createContainer(media, captionFor(a, c));
+        const id = await pub.create(media, captionFor(a, c), m.durationSeconds);
         await sql.run("UPDATE posts SET status = 'publishing', container_id = ?, container_at = ?, error = NULL WHERE id = ?", id, now, p.id);
-        out.push(`post #${p.id}: container ${id} created (${conn.provider})`);
+        out.push(`post #${p.id}: ${label} ${id} started (${conn.provider})`);
         continue;
       }
 
       // A failed status check (network blip, Composio hiccup) just waits for the next tick.
-      const st = await ig.containerStatus(p.container_id).catch((e: Error) => ({ code: "UNKNOWN", detail: e.message }));
-      if (st.code === "FINISHED") {
-        const r = await ig.publishContainer(p.container_id);
+      const st: Check = await pub.check(p.container_id).catch((e: Error) => ({ state: "pending" as const, detail: `check failed: ${e.message}` }));
+      let done: { mediaId: string; permalink: string } | null = null;
+      if (st.state === "ready") done = await pub.publish(p.container_id);
+      else if (st.state === "done") done = { mediaId: st.mediaId ?? "", permalink: st.permalink ?? "" };
+      if (done) {
         await sql.run(
           "UPDATE posts SET status = 'posted', posted_at = ?, remote_id = ?, permalink = ?, error = NULL WHERE id = ?",
           new Date().toISOString(),
-          r.mediaId,
-          r.permalink,
+          done.mediaId,
+          done.permalink,
           p.id,
         );
         await markContentPostedIfDone(c.id);
-        out.push(`post #${p.id}: published ${r.permalink}`);
-      } else if (st.code === "ERROR" || st.code === "EXPIRED") {
-        throw new Error(`Instagram could not process the media: ${st.detail || st.code}`);
+        out.push(`post #${p.id}: ${label} published ${done.permalink}`);
+      } else if (st.state === "error") {
+        throw new Error(st.detail);
       } else if (Date.now() - new Date(p.container_at ?? now).getTime() > 45 * 60_000) {
-        throw new Error(`Instagram was still processing after 45 minutes${st.code === "UNKNOWN" ? ` (${st.detail})` : ""}`);
-      } else out.push(`post #${p.id}: processing (${st.code}${st.code === "UNKNOWN" ? `: ${st.detail}` : ""})`);
+        throw new Error(`${label} was still processing after 45 minutes (${st.detail})`);
+      } else out.push(`post #${p.id}: ${label} processing (${st.detail})`);
     } catch (e) {
       await sql.run("UPDATE posts SET status = 'failed', container_id = NULL, error = ? WHERE id = ?", (e as Error).message, p.id);
       out.push(`post #${p.id}: failed — ${(e as Error).message}`);
@@ -119,20 +123,45 @@ async function publishDue(): Promise<string[]> {
   return out;
 }
 
-/** The same three steps, through our own Meta token or through Composio's managed connection. */
-function publisher(conn: Connection) {
-  if (conn.provider === "composio") {
-    const cc: composio.ComposioConn = { connectedAccountId: conn.provider_account_id ?? "", userId: conn.provider_user_id ?? "", igUserId: conn.remote_user_id };
+type Check = { state: "ready" | "done" | "pending" | "error"; detail: string; mediaId?: string; permalink?: string };
+
+/**
+ * The same steps for every route: create (start processing), check (on later ticks), publish (Instagram
+ * only; TikTok publishes by itself once processed). Instagram goes through our own Meta token or
+ * Composio; TikTok always through Composio.
+ */
+function publisher(conn: Connection, post: { tiktok_options: string | null }, isVideo: boolean) {
+  const cc: composio.ComposioConn = { connectedAccountId: conn.provider_account_id ?? "", userId: conn.provider_user_id ?? "", igUserId: conn.remote_user_id };
+  const igCheck = (s: { code: string; detail: string }): Check =>
+    s.code === "FINISHED"
+      ? { state: "ready", detail: s.code }
+      : s.code === "ERROR" || s.code === "EXPIRED"
+        ? { state: "error", detail: `Instagram could not process the media: ${s.detail || s.code}` }
+        : { state: "pending", detail: s.code || "processing" };
+
+  if (conn.platform === "tiktok") {
     return {
-      createContainer: (m: IgMedia, caption: string) => composio.createContainer(cc, m, caption),
-      containerStatus: (id: string) => composio.containerStatus(cc, id),
-      publishContainer: (id: string) => composio.publishContainer(cc, id),
+      create: async (m: IgMedia, _caption: string, seconds: number) => {
+        if (!post.tiktok_options) throw new Error("Choose this post's TikTok settings first (open it from the Schedule page).");
+        return tiktok.startPost(cc, m, JSON.parse(post.tiktok_options) as tiktok.TikTokOptions, seconds);
+      },
+      check: async (id: string): Promise<Check> => tiktok.postStatus(cc, id, conn.username, isVideo),
+      publish: async (): Promise<{ mediaId: string; permalink: string }> => {
+        throw new Error("TikTok publishes on its own");
+      },
+    };
+  }
+  if (conn.provider === "composio") {
+    return {
+      create: (m: IgMedia, caption: string) => composio.createContainer(cc, m, caption),
+      check: async (id: string) => igCheck(await composio.containerStatus(cc, id)),
+      publish: (id: string) => composio.publishContainer(cc, id),
     };
   }
   return {
-    createContainer: (m: IgMedia, caption: string) => graph.createContainer(conn.remote_user_id, conn.token, m, caption),
-    containerStatus: (id: string) => graph.containerStatus(id, conn.token),
-    publishContainer: (id: string) => graph.publishContainer(conn.remote_user_id, conn.token, id),
+    create: (m: IgMedia, caption: string) => graph.createContainer(conn.remote_user_id, conn.token, m, caption),
+    check: async (id: string) => igCheck(await graph.containerStatus(id, conn.token)),
+    publish: (id: string) => graph.publishContainer(conn.remote_user_id, conn.token, id),
   };
 }
 

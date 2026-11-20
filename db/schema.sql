@@ -127,6 +127,7 @@ CREATE TABLE IF NOT EXISTS posts (
   remote_id TEXT,
   permalink TEXT,
   error TEXT,
+  tiktok_options TEXT,  -- JSON: privacy, interactions, disclosure, caption, consent time (TikTok Direct Post)
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

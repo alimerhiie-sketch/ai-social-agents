@@ -303,6 +303,104 @@ export async function connectComposio(accountId: number) {
   revalidatePath("/", "layout");
 }
 
+/**
+ * Links the account to its TikTok connection in Composio (made with our own TikTok developer app).
+ * Unlike Instagram, nothing switches to automatic here: TikTok wants the owner to choose each post's
+ * settings and consent on the TikTok post screen.
+ */
+export async function connectTikTok(accountId: number) {
+  await requireAuth();
+  const a = await q.account(accountId);
+  if (!a) return;
+  const key = `connect-error-tiktok:${accountId}`;
+  const fail = async (msg: string) => {
+    await q.setSetting(key, msg);
+    revalidatePath(`/accounts/${accountId}`);
+  };
+  const { listConnections } = await import("@/lib/publish/composio");
+  const { creatorInfo } = await import("@/lib/publish/tiktok");
+  let found: { connectedAccountId: string; userId: string; username: string }[] = [];
+  try {
+    for (const c of await listConnections("tiktok")) {
+      const info = await creatorInfo({ ...c, igUserId: "" }).catch(() => null);
+      found.push({ ...c, username: info?.username ?? "" });
+    }
+  } catch (e) {
+    return fail((e as Error).message);
+  }
+  const handle = a.tiktok_handle.toLowerCase();
+  found = found.filter((f) => f.username);
+  const pick = handle ? found.find((f) => f.username.toLowerCase() === handle) : found.length === 1 ? found[0] : undefined;
+  if (!pick)
+    return fail(
+      found.length
+        ? `No active Composio TikTok connection for @${a.tiktok_handle || "?"} (found: ${found.map((f) => `@${f.username}`).join(", ")}).`
+        : "Composio has no working TikTok connection yet. Finish the TikTok setup in Composio and log in with the account first.",
+    );
+  await q.setSetting(key, "");
+  await sql.run(
+    `INSERT INTO connections (account_id, platform, remote_user_id, username, token, expires_at, refreshed_at, provider, provider_account_id, provider_user_id)
+     VALUES (?, 'tiktok', ?, ?, '', NULL, ?, 'composio', ?, ?)
+     ON CONFLICT(account_id, platform) DO UPDATE SET remote_user_id = excluded.remote_user_id, username = excluded.username,
+       refreshed_at = excluded.refreshed_at, provider = 'composio', provider_account_id = excluded.provider_account_id,
+       provider_user_id = excluded.provider_user_id`,
+    accountId,
+    pick.username,
+    pick.username,
+    new Date().toISOString(),
+    pick.connectedAccountId,
+    pick.userId,
+  );
+  revalidatePath("/", "layout");
+}
+
+/** TikTok's URL-prefix ownership file, served publicly at /api/media/<file name>. */
+export async function saveTikTokVerification(fd: FormData) {
+  await requireAuth();
+  const name = s(fd, "name").split(/[\\/]/).pop() ?? "";
+  const body = s(fd, "body");
+  if (!/^tiktok[\w-]*\.txt$/.test(name) || !body) return;
+  await q.setSetting(`tiktok_verify:${name}`, body);
+  revalidatePath("/", "layout");
+}
+
+/**
+ * The owner's choices on the TikTok post screen. Saving them is the owner's consent to post this piece
+ * with these settings at its time; the post switches to automatic.
+ */
+export async function confirmTikTokPost(postId: number, fd: FormData) {
+  await requireAuth();
+  const p = await q.post(postId);
+  if (!p || p.platform !== "tiktok" || p.status === "posted" || p.status === "publishing") return;
+  const privacy = s(fd, "privacy_level");
+  const brandOn = fd.get("disclose") === "on";
+  const opts = {
+    privacy_level: privacy,
+    allow_comment: fd.get("allow_comment") === "on",
+    allow_duet: fd.get("allow_duet") === "on",
+    allow_stitch: fd.get("allow_stitch") === "on",
+    brand_organic: brandOn && fd.get("brand_organic") === "on",
+    brand_content: brandOn && fd.get("brand_content") === "on",
+    is_aigc: fd.get("is_aigc") === "on",
+    title: s(fd, "title"),
+    caption: s(fd, "caption"),
+    consented_at: new Date().toISOString(),
+  };
+  if (!privacy || !opts.caption) return;
+  if (brandOn && !opts.brand_organic && !opts.brand_content) return;
+  if (opts.brand_content && privacy === "SELF_ONLY") return;
+  const now = fd.get("post_now") === "on";
+  await sql.run(
+    "UPDATE posts SET method = 'api', status = 'scheduled', tiktok_options = ?, container_id = NULL, error = NULL, scheduled_at = CASE WHEN ? THEN ? ELSE scheduled_at END WHERE id = ?",
+    JSON.stringify(opts),
+    now ? 1 : 0,
+    new Date().toISOString(),
+    postId,
+  );
+  revalidatePath("/", "layout");
+  redirect("/schedule");
+}
+
 /** Sends one overdue phone-page Instagram post through the API on the next cron tick. */
 export async function sendViaApi(postId: number) {
   await requireAuth();

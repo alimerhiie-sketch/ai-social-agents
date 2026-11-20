@@ -107,7 +107,7 @@ async function mcpTool(name: string, args: Json): Promise<Json> {
 }
 
 /** Runs one Composio tool. Throws with the tool's own error message when it fails. */
-async function run(conn: ComposioConn, slug: string, args: Json): Promise<Json> {
+export async function run(conn: ComposioConn, slug: string, args: Json): Promise<Json> {
   if (await isConsumerKey()) {
     const outer = await mcpTool("COMPOSIO_MULTI_EXECUTE_TOOL", {
       tools: [{ tool_slug: slug, arguments: args, account: conn.connectedAccountId }],
@@ -152,7 +152,7 @@ function pickId(data: Json): string {
   return id;
 }
 
-function pickField(data: Json, field: string): string {
+export function pickField(data: Json, field: string): string {
   const stack: unknown[] = [data];
   while (stack.length) {
     const v = stack.pop();
@@ -164,8 +164,32 @@ function pickField(data: Json, field: string): string {
   return "";
 }
 
+/** First value stored under `field` anywhere in the response (breadth-first, any type). */
+export function pickAny(data: unknown, field: string): unknown {
+  const queue: unknown[] = [data];
+  while (queue.length) {
+    const v = queue.shift();
+    if (!v || typeof v !== "object") continue;
+    const o = v as Json;
+    if (field in o && o[field] != null) return o[field];
+    queue.push(...Object.values(o));
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Finding the connection
+
+/** Active connected accounts for a toolkit (Connect account ids for ck_ keys, ca_… ids otherwise). */
+export async function listConnections(toolkit: string): Promise<{ connectedAccountId: string; userId: string }[]> {
+  if (await isConsumerKey()) {
+    const j = await mcpTool("COMPOSIO_MANAGE_CONNECTIONS", { toolkits: [{ name: toolkit, action: "list" }] });
+    const t = ((((j.data ?? {}) as Json).results ?? {}) as Json)[toolkit] as { accounts?: { id: string; status?: string }[] } | undefined;
+    return (t?.accounts ?? []).filter((a) => (a.status ?? "").toUpperCase() === "ACTIVE").map((a) => ({ connectedAccountId: a.id, userId: "" }));
+  }
+  const j = await api("GET", `/connected_accounts?toolkit_slugs=${encodeURIComponent(toolkit)}&statuses=ACTIVE&limit=50`);
+  return ((j.items ?? []) as { id: string; user_id: string }[]).map((i) => ({ connectedAccountId: i.id, userId: i.user_id }));
+}
 
 /** Active Instagram connections in the Composio project, with the IG account each one posts as. */
 export async function findInstagramConnections(): Promise<(ComposioConn & { username: string })[]> {

@@ -115,6 +115,8 @@ export type Post = {
   remote_id: string | null;
   permalink: string | null;
   error: string | null;
+  /** TikTok Direct Post settings the owner chose on the TikTok post screen (JSON TikTokOptions). */
+  tiktok_options: string | null;
   created_at: string;
 };
 

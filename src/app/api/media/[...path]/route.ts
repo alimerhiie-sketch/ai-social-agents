@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { bearerOk, COOKIE, isAuthed, mediaSigOk } from "@/lib/auth";
 import { env } from "@/lib/queue";
+import { q } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
 
@@ -13,6 +14,12 @@ const TYPES: Record<string, string> = { mp4: "video/mp4", jpg: "image/jpeg", jpe
 export async function GET(req: Request, { params }: { params: Promise<{ path: string[] }> }) {
   const key = (await params).path.map(decodeURIComponent).join("/");
   const url = new URL(req.url);
+
+  // TikTok's URL-prefix ownership file (public by design): lets TikTok pull our media from this prefix.
+  if (/^tiktok[\w-]*\.txt$/.test(key)) {
+    const body = await q.setting(`tiktok_verify:${key}`, "");
+    return body ? new Response(body, { headers: { "Content-Type": "text/plain; charset=utf-8" } }) : new Response("Not found", { status: 404 });
+  }
   const allowed =
     (await mediaSigOk(key, url.searchParams.get("sig"))) || (await isAuthed((await cookies()).get(COOKIE)?.value)) || (await bearerOk(req));
   if (!allowed) return new Response("Not found", { status: 404 });

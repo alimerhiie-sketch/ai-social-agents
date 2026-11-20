@@ -17,6 +17,7 @@ export default async function Schedule({ searchParams }: { searchParams: Promise
   const posts = await q.posts({ accountId, from: since, statuses: ["scheduled", "publishing", "posted", "failed"] });
   const ready = await q.content({ accountId, status: "ready", limit: 500 });
   const names = new Map(accounts.map((a) => [a.id, a.name]));
+  const ttConnected = new Set((await Promise.all(accounts.map(async (a) => ((await q.connection(a.id, "tiktok")) ? a.id : 0)))).filter(Boolean));
   const igConnected = new Set((await Promise.all(accounts.map(async (a) => ((await q.connection(a.id, "instagram")) ? a.id : 0)))).filter(Boolean));
   const items = new Map(await Promise.all([...new Set(posts.map((p) => p.content_id))].map(async (id) => [id, await q.contentItem(id)] as const)));
 
@@ -83,11 +84,23 @@ export default async function Schedule({ searchParams }: { searchParams: Promise
                       {p.status !== "posted" && p.status !== "publishing" && (
                         <>
                           {p.method === "api" ? (
-                            <form action={postNow.bind(null, p.id)}>
-                              <SubmitButton className="btn btn-sm">{p.status === "failed" ? "Retry now" : "Post now"}</SubmitButton>
-                            </form>
+                            <>
+                              {p.platform === "tiktok" && (
+                                <Link href={`/schedule/tiktok/${p.id}`} className="btn btn-ghost btn-sm">
+                                  TikTok settings
+                                </Link>
+                              )}
+                              <form action={postNow.bind(null, p.id)}>
+                                <SubmitButton className="btn btn-sm">{p.status === "failed" ? "Retry now" : "Post now"}</SubmitButton>
+                              </form>
+                            </>
                           ) : (
                             <>
+                              {p.platform === "tiktok" && ttConnected.has(p.account_id) && (
+                                <Link href={`/schedule/tiktok/${p.id}`} className="btn btn-sm">
+                                  Post via API
+                                </Link>
+                              )}
                               {p.platform === "instagram" && igConnected.has(p.account_id) && (
                                 <form action={sendViaApi.bind(null, p.id)}>
                                   <SubmitButton className="btn btn-sm" pending="Queuing…">
