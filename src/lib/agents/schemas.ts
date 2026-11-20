@@ -105,8 +105,20 @@ export const planSchema = obj({
   items: list(contentItem),
 });
 
+const beat = obj({
+  say: str("The exact words of this scene's voiceover spoken during this beat, in order (3–8 words)"),
+  visual: en(["title", "icon", "icons", "split", "counter", "bars", "versus", "flow", "meter", "character", "chat", "checklist", "painting"]),
+  text: str("On-screen words for the visual: title text, icon label, split phrase with | between chunks, meter limit label, speech bubble. '' for none"),
+  icon: str("Lucide icon name in kebab-case for icon / character prop, e.g. 'scissors', 'coins', 'message-circle'. '' for none"),
+  items: list(obj({ icon: str("Lucide icon name or ''"), label: str(), value: str() }), "Rows for icons / bars / versus / flow / chat / checklist; [] otherwise"),
+  number: str("counter: the figure, e.g. '100,000', '$20', '75%'. '' otherwise"),
+  level: num("meter fill or counter ring, 0–1. 0 otherwise"),
+  pose: en(["idle", "wave", "point", "think", "shrug", "cheer", "hold", "surprised"]),
+  transition: en(["cut", "whip", "zoom", "wipe", "iris"]),
+});
+
 const scene = obj({
-  type: en(["illustration", "hook", "statement", "list", "steps", "stat", "compare", "verdict", "cta"]),
+  type: en(["motion", "illustration", "hook", "statement", "list", "steps", "stat", "compare", "verdict", "cta"]),
   kicker: str(),
   headline: str(),
   subline: str(),
@@ -119,12 +131,13 @@ const scene = obj({
   scoreMax: int(),
   voiceover: str(),
   seconds: num(),
-  imagePrompt: str("illustration only: what the picture shows, no style words, never the character's name"),
+  imagePrompt: str("motion: an optional painted backdrop, an empty place with no people ('' for none). illustration (slides): what the picture shows. No style words, never the character's name"),
   withCharacter: { type: "boolean" },
   camera: en(["push-in", "pull-out", "pan-left", "pan-right", "rise", "drift"]),
+  beats: list(beat, "motion scenes: the visual beats over this voice line, one every 1–2.5 s. [] for slides"),
 });
 
 export const scenePlanSchema = obj({
-  notes: str("One sentence on the visual story / metaphor running through the piece"),
+  notes: str("One sentence on the visual idea running through the piece"),
   scenes: list(scene),
 });

@@ -37,24 +37,6 @@ export function Slide({ scene, index, total, palette: brandPalette, handle, isCo
         </>
       )}
 
-      {/* slide counter as an edit timeline: one clip per slide */}
-      {total > 1 && (
-        <div style={{ position: "absolute", top: 92, left: 96, right: 96, display: "flex", gap: 10 }}>
-          {Array.from({ length: total }, (_, i) => (
-            <div
-              key={i}
-              style={{
-                flex: 1,
-                height: i === index ? 14 : 10,
-                marginTop: i === index ? 0 : 2,
-                borderRadius: 999,
-                background: i < index ? palette.soft : i === index ? palette.ink : withAlpha(palette.ink, 0.2),
-              }}
-            />
-          ))}
-        </div>
-      )}
-
       <div
         style={{
           position: "absolute",

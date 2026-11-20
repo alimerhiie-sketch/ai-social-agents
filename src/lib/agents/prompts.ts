@@ -174,11 +174,13 @@ export async function buildPrompt(job: Job): Promise<string> {
       };
       return [
         job.kind === "video"
-          ? "Turn this approved short-video script into a scene plan for the illustrated reel templates."
+          ? "Turn this approved short-video script into a motion-graphics beat plan (scenes = voice lines, beats = a new animated visual every 1–2.5 s)."
           : `Turn this approved ${c.format === "carousel" ? "carousel" : "single post"} into a slide plan.`,
         "",
-        `ART STYLE (the image model adds it; don't repeat style words in imagePrompt): ${style.label}`,
-        `RECURRING CHARACTER: ${a.character ? "yes — set withCharacter true where the character appears, and never name or describe it in imagePrompt (the pipeline inserts its description)" : "none — set withCharacter false everywhere"}`,
+        `ART STYLE (the image model adds it to painted backdrops; don't repeat style words in imagePrompt): ${style.label}`,
+        job.kind === "video"
+          ? `RECURRING CHARACTER: ${a.character ? "yes — it is drawn and animated in code; use 'character' beats with a pose. Never put it (or any people) in imagePrompt." : "none — skip 'character' beats"}`
+          : `RECURRING CHARACTER: ${a.character ? "yes — set withCharacter true where the character appears, and never name or describe it in imagePrompt (the pipeline inserts its description)" : "none — set withCharacter false everywhere"}`,
         `ACCOUNT LANGUAGE: ${a.language}`,
         "",
         "THE PIECE",

@@ -44,11 +44,15 @@ export async function applyResult(job: Job, data: unknown): Promise<string> {
   switch (job.kind) {
     case "video":
     case "design": {
-      const plan = data as { notes: string; scenes: { type: string }[] };
+      const plan = data as { notes: string; scenes: { type: string; beats?: unknown[] }[] };
       if (!Array.isArray(plan?.scenes) || !plan.scenes.length) throw new Error("The plan has no scenes");
       await sql.run("UPDATE content SET production = ?, updated_at = datetime('now') WHERE id = ?", JSON.stringify(plan), job.ref_id);
+      if (job.kind === "video") {
+        const beats = plan.scenes.reduce((n, s) => n + (s.beats?.length ?? 0), 0);
+        return `${plan.scenes.length} scenes, ${beats} motion beats planned — rendering next`;
+      }
       const painted = plan.scenes.filter((s) => s.type === "illustration").length;
-      return `${plan.scenes.length} ${job.kind === "video" ? "scenes" : "slides"} planned (${painted} illustrated) — rendering next`;
+      return `${plan.scenes.length} slides planned (${painted} illustrated) — rendering next`;
     }
     case "render":
       return "Rendered";

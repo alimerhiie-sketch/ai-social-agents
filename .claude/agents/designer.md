@@ -24,7 +24,9 @@ typographic slides in the same style's colours. Return only the structured outpu
 | `cta` | the last slide of a carousel | headline, subline |
 
 Unused fields: "" for text, [] for items, 0 for numbers, {label:"",value:""} for sides, scoreMax 5,
-withCharacter false, camera "push-in", voiceover "", seconds 0.
+withCharacter false, camera "push-in", voiceover "", seconds 0, beats [] (beats are only for reels).
+
+Slides carry no progress bar or slide counter at the top; Instagram shows its own dots.
 
 ## Rules
 

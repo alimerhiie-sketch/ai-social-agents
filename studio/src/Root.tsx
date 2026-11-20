@@ -2,7 +2,7 @@ import React from "react";
 import { Composition } from "remotion";
 import { Reel, sceneFrames } from "./Reel";
 import { Slide, SLIDE_SETTLED_FRAME } from "./Slide";
-import { AMX_PALETTE, FPS, type ReelProps, type Scene, type SlideProps } from "./types";
+import { AMX_PALETTE, FPS, type Beat, type ReelProps, type Scene, type SlideProps } from "./types";
 
 const blank: Omit<Scene, "type" | "headline"> = {
   kicker: "",
@@ -18,19 +18,80 @@ const blank: Omit<Scene, "type" | "headline"> = {
   seconds: 3,
 };
 
-// Preview data for `npm run studio`; real renders pass their own props.
+const beat = (b: Partial<Beat>): Beat => ({ say: "", visual: "title", text: "", icon: "", items: [], number: "", level: 0, pose: "idle", transition: "cut", ...b });
+const it = (icon: string, label: string, value = "") => ({ icon, label, value });
+
+// Preview data for `npm run studio`: one of every motion visual. Real renders pass their own props.
 const demo: ReelProps = {
   palette: AMX_PALETTE,
   handle: "amx_ai1",
   showCaptions: true,
+  artStyle: "ghibli",
   scenes: [
-    { ...blank, type: "hook", kicker: "AI news", headline: "ChatGPT can now *spend your money.*", subline: "Here's what actually protects you.", seconds: 3.4 },
-    { ...blank, type: "steps", kicker: "How it works", headline: "Three checks before it pays", items: ["The agent asks to buy", "You approve with Face ID", "The store sees a stand-in number"], seconds: 5 },
-    { ...blank, type: "compare", kicker: "Who gets it", headline: "Right now", left: { label: "You", value: "Not yet" }, right: { label: "US · Pro plan", value: "Available" }, seconds: 3.5 },
-    { ...blank, type: "stat", kicker: "Cost to you", headline: "", number: "$0", numberLabel: "Nothing to do yet", seconds: 3 },
-    { ...blank, type: "verdict", kicker: "Hype meter", headline: "Interesting. Not for most of us *yet.*", score: 2, scoreMax: 5, seconds: 3.6 },
-    { ...blank, type: "list", kicker: "Remember", headline: "Before you let AI pay", items: ["Approve every purchase", "Use a stand-in card", "Check the store"], seconds: 4 },
-    { ...blank, type: "cta", headline: "Send this to the friend who *buys everything online.*", subline: "AI, explained like you're busy.", seconds: 3.4 },
+    {
+      ...blank,
+      type: "motion",
+      headline: "",
+      voiceover: "What is a token in AI? Here is the thirty second version.",
+      seconds: 4.4,
+      beats: [
+        beat({ say: "What is a token in AI?", visual: "title", text: "What is a *token* in AI?", transition: "cut" }),
+        beat({ say: "Here is the thirty second version.", visual: "character", pose: "wave", text: "30-second version", transition: "whip" }),
+      ],
+    },
+    {
+      ...blank,
+      type: "motion",
+      headline: "",
+      voiceover: "AI doesn't read whole words. It cuts text into small chunks.",
+      seconds: 4.6,
+      beats: [
+        beat({ say: "AI doesn't read whole words.", visual: "icon", icon: "book-open", text: "Not whole words", transition: "zoom" }),
+        beat({ say: "It cuts text into small chunks.", visual: "split", text: "Un|believ|able", transition: "wipe" }),
+      ],
+    },
+    {
+      ...blank,
+      type: "motion",
+      headline: "",
+      voiceover: "Limits are counted in tokens, and so is the price.",
+      seconds: 4.4,
+      beats: [
+        beat({ say: "Limits are counted in tokens,", visual: "meter", text: "Limit", level: 0.8, transition: "iris" }),
+        beat({ say: "and so is the price.", visual: "counter", number: "100,000", text: "tokens ≈ 75,000 words", level: 0.75, transition: "whip" }),
+      ],
+    },
+    {
+      ...blank,
+      type: "motion",
+      headline: "",
+      voiceover: "You type, it chunks, it answers. Free versus paid.",
+      seconds: 5,
+      beats: [
+        beat({ say: "You type, it chunks, it answers.", visual: "flow", items: [it("keyboard", "You type"), it("scissors", "It chunks"), it("sparkles", "It answers")], transition: "zoom" }),
+        beat({ say: "Free versus paid.", visual: "versus", items: [it("gift", "Free", "Short limit"), it("crown", "Paid", "Long limit")], transition: "wipe" }),
+      ],
+    },
+    {
+      ...blank,
+      type: "motion",
+      headline: "",
+      voiceover: "Ask it to explain tokens. Three things to remember. Which uses more?",
+      seconds: 6,
+      beats: [
+        beat({ say: "Ask it to explain tokens.", visual: "chat", items: [it("", "you", "What is a token?"), it("", "ai", "A small chunk of text, often part of a word.")], transition: "iris" }),
+        beat({ say: "Three things to remember.", visual: "checklist", text: "Remember", items: [it("", "Tokens are chunks"), it("", "Limits count them"), it("", "Prices count them")], transition: "whip" }),
+        beat({ say: "Which uses more?", visual: "bars", items: [it("mail", "Email", "300"), it("file-text", "Essay", "1,500"), it("book", "Book", "90,000")], transition: "zoom" }),
+      ],
+    },
+    {
+      ...blank,
+      type: "motion",
+      headline: "",
+      voiceover: "Send this to a friend who keeps nodding along.",
+      seconds: 3.4,
+      beats: [beat({ say: "Send this to a friend who keeps nodding along.", visual: "character", pose: "cheer", icon: "send", text: "Send this to a friend", transition: "wipe" })],
+    },
   ],
 };
 

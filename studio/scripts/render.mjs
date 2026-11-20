@@ -115,10 +115,13 @@ async function renderReel(serveUrl) {
     const style = spec.artStyle ? styleById(spec.artStyle) : null;
     const seed = spec.seed ?? Math.floor(Math.random() * 1e6);
     const images = {};
-    const painted = spec.scenes.filter((s) => s.type === "illustration");
+    // Motion scenes may have one painted plate (an empty environment in the account's art style, shown far
+    // back and in the `painting` beat). The character is drawn in code, so plates never include it.
+    const wantsPaint = (s) => s.type === "illustration" || (s.type === "motion" && String(s.imagePrompt || "").trim());
+    const painted = spec.scenes.filter(wantsPaint);
     let n = 0;
     for (const [i, s] of spec.scenes.entries()) {
-      if (s.type !== "illustration" || !style) continue;
+      if (!wantsPaint(s) || !style) continue;
       n++;
       const file = `img-${String(i + 1).padStart(2, "0")}.jpg`;
       const out = path.join(spec.outDir, file);
@@ -128,7 +131,10 @@ async function renderReel(serveUrl) {
         say(`Painting ${n}/${painted.length} (${style.label}): ${String(s.imagePrompt).slice(0, 70)}…`);
         const t0 = Date.now();
         // one seed per video, plus the character reference, keep the character and palette consistent
-        const r = await generateImage({ prompt: imagePrompt(s.imagePrompt || s.headline || "", style, s.withCharacter ? spec.character : null), seed, out, reference: s.withCharacter ? spec.characterRefReady : undefined });
+        const plate = s.type === "motion";
+        const scenePrompt = plate ? `Empty environment, no people, no characters, no figures: ${s.imagePrompt}` : s.imagePrompt || s.headline || "";
+        const withChar = !plate && s.withCharacter;
+        const r = await generateImage({ prompt: imagePrompt(scenePrompt, style, withChar ? spec.character : null), seed, out, reference: withChar ? spec.characterRefReady : undefined });
         say(`  ↳ ${r.provider} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
       }
       images[i] = `http://127.0.0.1:${port}/${file}`;
@@ -146,6 +152,7 @@ async function renderReel(serveUrl) {
         const secs = audio.audio.length / audio.sampling_rate;
         scene.audioSrc = `http://127.0.0.1:${port}/${file}`;
         scene.durationInFrames = Math.max(AUDIO_DELAY + Math.ceil((secs + TAIL) * FPS), 45);
+        scene.voiceFrames = Math.round(secs * FPS);
         scene.captions = captionsFor(s.voiceover, secs);
       } else {
         scene.durationInFrames = Math.max(45, Math.round((s.seconds || 3) * FPS));
