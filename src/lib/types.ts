@@ -126,6 +126,12 @@ export type Connection = {
   token: string;
   expires_at: string | null;
   refreshed_at: string | null;
+  /** "graph" = our own Meta token in `token`; "composio" = Composio holds the token. */
+  provider: "graph" | "composio";
+  /** Composio connected account id (ca_…). */
+  provider_account_id: string | null;
+  /** Composio user id the connection belongs to. */
+  provider_user_id: string | null;
 };
 
 export type Job = {

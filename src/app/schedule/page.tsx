@@ -2,7 +2,7 @@ import Link from "next/link";
 import { q } from "@/lib/db";
 import { localDayLabel, localTime, nowMs } from "@/lib/dates";
 import type { Post } from "@/lib/types";
-import { cancelPost, markPosted, postNow, scheduleAllReady } from "../actions";
+import { cancelPost, markPosted, postNow, scheduleAllReady, sendViaApi } from "../actions";
 import { AccountFilter } from "@/components/account-filter";
 import { SubmitButton } from "@/components/client";
 import { Badge, Empty, FormatBadge, PageHeader, Section } from "@/components/ui";
@@ -17,6 +17,7 @@ export default async function Schedule({ searchParams }: { searchParams: Promise
   const posts = await q.posts({ accountId, from: since, statuses: ["scheduled", "publishing", "posted", "failed"] });
   const ready = await q.content({ accountId, status: "ready", limit: 500 });
   const names = new Map(accounts.map((a) => [a.id, a.name]));
+  const igConnected = new Set((await Promise.all(accounts.map(async (a) => ((await q.connection(a.id, "instagram")) ? a.id : 0)))).filter(Boolean));
   const items = new Map(await Promise.all([...new Set(posts.map((p) => p.content_id))].map(async (id) => [id, await q.contentItem(id)] as const)));
 
   const days = new Map<string, Post[]>();
@@ -86,9 +87,18 @@ export default async function Schedule({ searchParams }: { searchParams: Promise
                               <SubmitButton className="btn btn-sm">{p.status === "failed" ? "Retry now" : "Post now"}</SubmitButton>
                             </form>
                           ) : (
-                            <form action={markPosted.bind(null, p.id)}>
-                              <SubmitButton className="btn btn-sm">Mark posted</SubmitButton>
-                            </form>
+                            <>
+                              {p.platform === "instagram" && igConnected.has(p.account_id) && (
+                                <form action={sendViaApi.bind(null, p.id)}>
+                                  <SubmitButton className="btn btn-sm" pending="Queuing…">
+                                    Post via API
+                                  </SubmitButton>
+                                </form>
+                              )}
+                              <form action={markPosted.bind(null, p.id)}>
+                                <SubmitButton className="btn btn-sm">Mark posted</SubmitButton>
+                              </form>
+                            </>
                           )}
                           <form action={cancelPost.bind(null, p.id)}>
                             <SubmitButton className="btn btn-ghost btn-sm">Cancel</SubmitButton>

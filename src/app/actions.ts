@@ -237,7 +237,8 @@ export async function connectInstagram(accountId: number, fd: FormData) {
     `INSERT INTO connections (account_id, platform, remote_user_id, username, token, expires_at, refreshed_at)
      VALUES (?, 'instagram', ?, ?, ?, ?, ?)
      ON CONFLICT(account_id, platform) DO UPDATE SET remote_user_id = excluded.remote_user_id, username = excluded.username,
-       token = excluded.token, expires_at = excluded.expires_at, refreshed_at = excluded.refreshed_at`,
+       token = excluded.token, expires_at = excluded.expires_at, refreshed_at = excluded.refreshed_at,
+       provider = 'graph', provider_account_id = NULL, provider_user_id = NULL`,
     accountId,
     me.userId,
     me.username,
@@ -248,6 +249,67 @@ export async function connectInstagram(accountId: number, fd: FormData) {
   // Pieces already waiting to go out switch from the phone page to automatic posting.
   await sql.run("UPDATE posts SET method = 'api' WHERE account_id = ? AND platform = 'instagram' AND status = 'scheduled'", accountId);
   revalidatePath(`/accounts/${accountId}`);
+}
+
+/**
+ * Links the account to its Instagram connection in Composio (made by logging in through Composio's
+ * managed OAuth). Needs the COMPOSIO_API_KEY Worker secret. Picks the connection whose username matches
+ * the account's Instagram handle.
+ */
+export async function connectComposio(accountId: number) {
+  await requireAuth();
+  const a = await q.account(accountId);
+  if (!a) return;
+  const fail = async (msg: string) => {
+    await q.setSetting(`connect-error:${accountId}`, msg);
+    revalidatePath(`/accounts/${accountId}`);
+  };
+  const { findInstagramConnections } = await import("@/lib/publish/composio");
+  let found: Awaited<ReturnType<typeof findInstagramConnections>>;
+  try {
+    found = await findInstagramConnections();
+  } catch (e) {
+    return fail((e as Error).message);
+  }
+  const handle = a.ig_handle.toLowerCase();
+  const pick = handle ? found.find((f) => f.username.toLowerCase() === handle) : found.length === 1 ? found[0] : undefined;
+  if (!pick || !pick.igUserId)
+    return fail(
+      found.length
+        ? `No active Composio Instagram connection for @${a.ig_handle || "?"} (found: ${found.map((f) => `@${f.username || "unknown"}`).join(", ")}).`
+        : "Composio has no active Instagram connection in the project this API key belongs to.",
+    );
+  await q.setSetting(`connect-error:${accountId}`, "");
+  await sql.run(
+    `INSERT INTO connections (account_id, platform, remote_user_id, username, token, expires_at, refreshed_at, provider, provider_account_id, provider_user_id)
+     VALUES (?, 'instagram', ?, ?, '', NULL, ?, 'composio', ?, ?)
+     ON CONFLICT(account_id, platform) DO UPDATE SET remote_user_id = excluded.remote_user_id, username = excluded.username,
+       token = '', expires_at = NULL, refreshed_at = excluded.refreshed_at, provider = 'composio',
+       provider_account_id = excluded.provider_account_id, provider_user_id = excluded.provider_user_id`,
+    accountId,
+    pick.igUserId,
+    pick.username,
+    new Date().toISOString(),
+    pick.connectedAccountId,
+    pick.userId,
+  );
+  // Upcoming Instagram posts switch from the phone page to automatic posting. Ones already past their
+  // slot stay on the phone page (they may have been posted by hand); Post now on the schedule sends one.
+  await sql.run(
+    "UPDATE posts SET method = 'api' WHERE account_id = ? AND platform = 'instagram' AND status = 'scheduled' AND scheduled_at >= ?",
+    accountId,
+    new Date().toISOString(),
+  );
+  revalidatePath("/", "layout");
+}
+
+/** Sends one overdue phone-page Instagram post through the API on the next cron tick. */
+export async function sendViaApi(postId: number) {
+  await requireAuth();
+  const p = await q.post(postId);
+  if (!p || p.platform !== "instagram" || p.status !== "scheduled" || !(await q.connection(p.account_id, "instagram"))) return;
+  await sql.run("UPDATE posts SET method = 'api', scheduled_at = ?, container_id = NULL, error = NULL WHERE id = ?", new Date().toISOString(), postId);
+  revalidatePath("/", "layout");
 }
 
 export async function disconnect(accountId: number, platform: string) {

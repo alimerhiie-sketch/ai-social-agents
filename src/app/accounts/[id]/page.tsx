@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { q } from "@/lib/db";
 import { FORMATS, VIDEO_STYLES } from "@/lib/options";
 import type { Strategy } from "@/lib/types";
-import { connectInstagram, disconnect, runCycle, runJob, runPlanWeek } from "../../actions";
+import { connectComposio, connectInstagram, disconnect, runCycle, runJob, runPlanWeek } from "../../actions";
 import { CopyButton, SubmitButton } from "@/components/client";
 import { Badge, Empty, FormatBadge, PageHeader, Section, TextLink, timeAgo } from "@/components/ui";
 
@@ -263,25 +263,55 @@ async function Connections({ accountId, igHandle }: { accountId: number; igHandl
           {ig ? (
             <>
               <p className="mt-2 text-[13px] text-muted">
-                Connected as <span className="text-fg">@{ig.username}</span>. The Publisher posts scheduled pieces automatically and keeps the
-                token refreshed{ig.expires_at ? ` (currently valid until ${new Date(ig.expires_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Asia/Beirut" })})` : ""}.
+                Connected as <span className="text-fg">@{ig.username}</span>
+                {ig.provider === "composio" ? (
+                  <>
+                    {" "}through Composio (account <span className="font-mono text-xs">{ig.provider_account_id}</span>). Composio keeps the login
+                    fresh; the Publisher posts scheduled pieces automatically every 5 minutes.
+                  </>
+                ) : (
+                  <>
+                    . The Publisher posts scheduled pieces automatically and keeps the token refreshed
+                    {ig.expires_at ? ` (currently valid until ${new Date(ig.expires_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Asia/Beirut" })})` : ""}.
+                  </>
+                )}
               </p>
-              <form action={disconnect.bind(null, accountId, "instagram")} className="mt-3">
-                <SubmitButton className="btn btn-ghost btn-sm">Disconnect</SubmitButton>
-              </form>
+              {err && <p className="mt-2 text-xs text-bad">{err}</p>}
+              <div className="mt-3 flex gap-2">
+                {ig.provider === "composio" && (
+                  <form action={connectComposio.bind(null, accountId)}>
+                    <SubmitButton className="btn btn-ghost btn-sm" pending="Checking…">
+                      Re-check
+                    </SubmitButton>
+                  </form>
+                )}
+                <form action={disconnect.bind(null, accountId, "instagram")}>
+                  <SubmitButton className="btn btn-ghost btn-sm">Disconnect</SubmitButton>
+                </form>
+              </div>
             </>
           ) : (
-            <form action={connectInstagram.bind(null, accountId)} className="mt-3 space-y-3">
+            <div className="mt-3 space-y-3">
               <p className="text-[13px] leading-relaxed text-muted">
-                Paste the access token for {igHandle ? `@${igHandle}` : "this account"} from your Meta app (Instagram → API setup with Instagram
-                login → Generate token). Until it&apos;s connected, Instagram posts go to your phone page like TikTok.
+                Connect {igHandle ? `@${igHandle}` : "this account"} in Composio (Instagram, log in with Facebook), then press Connect here. Until it&apos;s
+                connected, Instagram posts go to your phone page like TikTok.
               </p>
-              <input name="token" type="password" autoComplete="off" placeholder="Instagram access token" className="input font-mono text-xs" />
+              <form action={connectComposio.bind(null, accountId)}>
+                <SubmitButton className="btn btn-sm" pending="Looking it up…">
+                  Connect via Composio
+                </SubmitButton>
+              </form>
               {err && <p className="text-xs text-bad">{err}</p>}
-              <SubmitButton className="btn btn-sm" pending="Checking…">
-                Connect
-              </SubmitButton>
-            </form>
+              <details className="text-[13px] text-muted">
+                <summary className="cursor-pointer text-dim">Or paste a Meta access token</summary>
+                <form action={connectInstagram.bind(null, accountId)} className="mt-2 space-y-2">
+                  <input name="token" type="password" autoComplete="off" placeholder="Instagram access token" className="input font-mono text-xs" />
+                  <SubmitButton className="btn btn-sm" pending="Checking…">
+                    Connect
+                  </SubmitButton>
+                </form>
+              </details>
+            </div>
           )}
         </div>
         <div className="panel p-5">

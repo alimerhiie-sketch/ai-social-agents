@@ -14,6 +14,7 @@ export type HqEnv = {
   GITHUB_REF?: string;
   HQ_SECRET?: string;
   DASHBOARD_PASSWORD?: string;
+  COMPOSIO_API_KEY?: string;
 };
 
 let pinnedEnv: HqEnv | null = null;

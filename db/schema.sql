@@ -138,6 +138,9 @@ CREATE TABLE IF NOT EXISTS connections (
   token TEXT NOT NULL,
   expires_at TEXT,
   refreshed_at TEXT,
+  provider TEXT NOT NULL DEFAULT 'graph',  -- 'graph' (own Meta token) | 'composio' (managed OAuth)
+  provider_account_id TEXT,               -- Composio connected account id (ca_…)
+  provider_user_id TEXT,                  -- Composio user id
   PRIMARY KEY (account_id, platform)
 );
 

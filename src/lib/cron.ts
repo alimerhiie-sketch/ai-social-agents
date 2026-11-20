@@ -1,7 +1,10 @@
 import { q, sql, pinD1 } from "./db";
 import { isoDate, todayLocal, TZ } from "./dates";
 import { captionFor, nextSlot } from "./publish/schedule";
-import { containerStatus, createContainer, publishContainer, refreshToken, type IgMedia } from "./publish/instagram";
+import * as graph from "./publish/instagram";
+import * as composio from "./publish/composio";
+import type { IgMedia } from "./publish/instagram";
+import type { Connection } from "./types";
 import { signedMediaUrl } from "./auth";
 import { enqueueCycle, enqueueProduce, markContentPostedIfDone, pinEnv, wakeRunner, type HqEnv } from "./queue";
 
@@ -11,6 +14,8 @@ import { enqueueCycle, enqueueProduce, markContentPostedIfDone, pinEnv, wakeRunn
 //  3. wake the GitHub Actions runner if there's work it can do
 
 const NIGHTLY_HOUR = 3; // 03:00 in the owner's time zone
+/** A post this late (cron outage, or it sat on the phone page) is not sent on its own: press Retry now to send it anyway. */
+const MAX_LATE_MS = 6 * 3600_000;
 
 export async function runCron(env: HqEnv & { DB: unknown }) {
   pinD1(env.DB as never);
@@ -41,8 +46,8 @@ async function publishDue(): Promise<string[]> {
   const origin = await q.setting("public_url", "");
   if (!origin) return ["publish: waiting for the dashboard's public URL (open the dashboard once)"];
   const now = new Date().toISOString();
-  const due = await sql.all<{ id: number; content_id: number; account_id: number; status: string; container_id: string | null; container_at: string | null }>(
-    `SELECT id, content_id, account_id, status, container_id, container_at FROM posts
+  const due = await sql.all<{ id: number; content_id: number; account_id: number; status: string; scheduled_at: string; container_id: string | null; container_at: string | null }>(
+    `SELECT id, content_id, account_id, status, scheduled_at, container_id, container_at FROM posts
      WHERE method = 'api' AND platform = 'instagram' AND scheduled_at <= ? AND status IN ('scheduled','publishing')
      ORDER BY scheduled_at LIMIT 5`,
     now,
@@ -56,9 +61,9 @@ async function publishDue(): Promise<string[]> {
       let conn = await q.connection(a.id, "instagram");
       if (!conn) throw new Error("Instagram isn't connected for this account");
 
-      if (Date.now() - new Date(conn.refreshed_at ?? 0).getTime() > 7 * 86400_000) {
+      if (conn.provider !== "composio" && Date.now() - new Date(conn.refreshed_at ?? 0).getTime() > 7 * 86400_000) {
         try {
-          const r = await refreshToken(conn.token);
+          const r = await graph.refreshToken(conn.token);
           await sql.run(
             "UPDATE connections SET token = ?, expires_at = ?, refreshed_at = ? WHERE account_id = ? AND platform = 'instagram'",
             r.token,
@@ -69,8 +74,11 @@ async function publishDue(): Promise<string[]> {
           conn = (await q.connection(a.id, "instagram"))!;
         } catch {}
       }
+      const ig = publisher(conn);
 
       if (!p.container_id) {
+        if (Date.now() - new Date(p.scheduled_at).getTime() > MAX_LATE_MS)
+          throw new Error("Missed its slot by more than 6 hours, so it wasn't sent automatically. Press Retry now to post it anyway.");
         const m = c.media;
         const url = (f: string) => signedMediaUrl(origin, `${m.dir}/${f}`);
         const media: IgMedia =
@@ -79,15 +87,16 @@ async function publishDue(): Promise<string[]> {
             : m.files.length === 1
               ? { kind: "image", image: await url(m.files[0]) }
               : { kind: "carousel", images: await Promise.all(m.files.map(url)) };
-        const id = await createContainer(conn.remote_user_id, conn.token, media, captionFor(a, c));
+        const id = await ig.createContainer(media, captionFor(a, c));
         await sql.run("UPDATE posts SET status = 'publishing', container_id = ?, container_at = ?, error = NULL WHERE id = ?", id, now, p.id);
-        out.push(`post #${p.id}: container ${id} created`);
+        out.push(`post #${p.id}: container ${id} created (${conn.provider})`);
         continue;
       }
 
-      const st = await containerStatus(p.container_id, conn.token);
+      // A failed status check (network blip, Composio hiccup) just waits for the next tick.
+      const st = await ig.containerStatus(p.container_id).catch((e: Error) => ({ code: "UNKNOWN", detail: e.message }));
       if (st.code === "FINISHED") {
-        const r = await publishContainer(conn.remote_user_id, conn.token, p.container_id);
+        const r = await ig.publishContainer(p.container_id);
         await sql.run(
           "UPDATE posts SET status = 'posted', posted_at = ?, remote_id = ?, permalink = ?, error = NULL WHERE id = ?",
           new Date().toISOString(),
@@ -100,14 +109,31 @@ async function publishDue(): Promise<string[]> {
       } else if (st.code === "ERROR" || st.code === "EXPIRED") {
         throw new Error(`Instagram could not process the media: ${st.detail || st.code}`);
       } else if (Date.now() - new Date(p.container_at ?? now).getTime() > 45 * 60_000) {
-        throw new Error("Instagram was still processing after 45 minutes");
-      } else out.push(`post #${p.id}: processing (${st.code})`);
+        throw new Error(`Instagram was still processing after 45 minutes${st.code === "UNKNOWN" ? ` (${st.detail})` : ""}`);
+      } else out.push(`post #${p.id}: processing (${st.code}${st.code === "UNKNOWN" ? `: ${st.detail}` : ""})`);
     } catch (e) {
       await sql.run("UPDATE posts SET status = 'failed', container_id = NULL, error = ? WHERE id = ?", (e as Error).message, p.id);
       out.push(`post #${p.id}: failed — ${(e as Error).message}`);
     }
   }
   return out;
+}
+
+/** The same three steps, through our own Meta token or through Composio's managed connection. */
+function publisher(conn: Connection) {
+  if (conn.provider === "composio") {
+    const cc: composio.ComposioConn = { connectedAccountId: conn.provider_account_id ?? "", userId: conn.provider_user_id ?? "", igUserId: conn.remote_user_id };
+    return {
+      createContainer: (m: IgMedia, caption: string) => composio.createContainer(cc, m, caption),
+      containerStatus: (id: string) => composio.containerStatus(cc, id),
+      publishContainer: (id: string) => composio.publishContainer(cc, id),
+    };
+  }
+  return {
+    createContainer: (m: IgMedia, caption: string) => graph.createContainer(conn.remote_user_id, conn.token, m, caption),
+    containerStatus: (id: string) => graph.containerStatus(id, conn.token),
+    publishContainer: (id: string) => graph.publishContainer(conn.remote_user_id, conn.token, id),
+  };
 }
 
 // ---------------------------------------------------------------------------
