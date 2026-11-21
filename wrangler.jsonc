@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "agent-hq",
+  // worker.ts wraps the OpenNext build and adds the cron (posting + nightly cycle).
+  "main": "worker.ts",
+  "compatibility_date": "2026-11-01",
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+  "services": [{ "binding": "WORKER_SELF_REFERENCE", "service": "agent-hq" }],
+  "d1_databases": [{ "binding": "DB", "database_name": "agent-hq", "database_id": "d474dbf7-d4f3-46b5-a86b-318b83024a67" }],
+  // Finished videos and slides (Workers KV: free tier 1 GB, 25 MB per file).
+  "kv_namespaces": [{ "binding": "MEDIA", "id": "8a799faff59b4ed0be16dcb7622ecbcc" }],
+  "vars": {
+    "GITHUB_REPO": "alimerhiie-sketch/ai-social-agents",
+    "GITHUB_REF": "cloud",
+    "TIMEZONE_OFFSET_MINUTES": "120"
+  },
+  // Every 5 minutes: post what's due, start the GitHub runner if work is queued, run the nightly cycle.
+  "triggers": { "crons": ["*/5 * * * *"] },
+  "observability": { "enabled": true }
+}

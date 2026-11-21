@@ -1,19 +1,19 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { q } from "@/lib/db";
+import { q, sql } from "@/lib/db";
 import { FORMATS, VIDEO_STYLES } from "@/lib/options";
 import type { Strategy } from "@/lib/types";
-import { connectInstagram, disconnect, runCycle, runJob, runPlanWeek } from "../../actions";
-import { CliBanner, CopyButton, SubmitButton } from "@/components/client";
+import { connectComposio, connectInstagram, connectTikTok, disconnect, runCycle, runJob, runPlanWeek, saveTikTokVerification } from "../../actions";
+import { CopyButton, SubmitButton } from "@/components/client";
 import { Badge, Empty, FormatBadge, PageHeader, Section, TextLink, timeAgo } from "@/components/ui";
 
 export default async function AccountPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const a = q.account(Number(id));
+  const a = await q.account(Number(id));
   if (!a) notFound();
-  const c = q.counts(a.id);
-  const trends = q.trends({ accountId: a.id, status: "new", limit: 4 });
-  const content = q.content({ accountId: a.id, limit: 6 });
+  const c = await q.counts(a.id);
+  const trends = await q.trends({ accountId: a.id, status: "new", limit: 4 });
+  const content = await q.content({ accountId: a.id, limit: 6 });
   const label = (list: { id: string; label: string }[], ids: string[]) => ids.map((i) => list.find((x) => x.id === i)?.label ?? i);
 
   return (
@@ -37,7 +37,6 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
         {a.niche}
       </PageHeader>
 
-      <CliBanner />
 
       <div className="mb-10 grid gap-3 md:grid-cols-3">
         <ActionCard
@@ -110,7 +109,7 @@ export default async function AccountPage({ params }: { params: Promise<{ id: st
   );
 }
 
-function ActionCard({ title, body, action, label, agent }: { title: string; body: string; action: () => Promise<void>; label: string; agent: string }) {
+async function ActionCard({ title, body, action, label, agent }: { title: string; body: string; action: () => Promise<void>; label: string; agent: string }) {
   return (
     <div className="panel flex flex-col p-5">
       <div className="eyebrow">{agent}</div>
@@ -125,7 +124,7 @@ function ActionCard({ title, body, action, label, agent }: { title: string; body
   );
 }
 
-function Fact({ label, value }: { label: string; value: string }) {
+async function Fact({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-line px-4 py-3">
       <div className="eyebrow">{label}</div>
@@ -134,7 +133,7 @@ function Fact({ label, value }: { label: string; value: string }) {
   );
 }
 
-function StrategyView({ s }: { s: Strategy }) {
+async function StrategyView({ s }: { s: Strategy }) {
   return (
     <Section title="Strategy">
       <div className="space-y-3">
@@ -237,7 +236,7 @@ function StrategyView({ s }: { s: Strategy }) {
   );
 }
 
-function List({ items, mark, tone }: { items: string[]; mark: string; tone: string }) {
+async function List({ items, mark, tone }: { items: string[]; mark: string; tone: string }) {
   return (
     <ul className="space-y-2">
       {items.map((it, i) => (
@@ -250,9 +249,12 @@ function List({ items, mark, tone }: { items: string[]; mark: string; tone: stri
   );
 }
 
-function Connections({ accountId, igHandle }: { accountId: number; igHandle: string }) {
-  const ig = q.connection(accountId, "instagram");
-  const err = q.setting(`connect-error:${accountId}`, "");
+async function Connections({ accountId, igHandle }: { accountId: number; igHandle: string }) {
+  const ig = await q.connection(accountId, "instagram");
+  const err = await q.setting(`connect-error:${accountId}`, "");
+  const tt = await q.connection(accountId, "tiktok");
+  const ttErr = await q.setting(`connect-error-tiktok:${accountId}`, "");
+  const verifyFiles = (await sql.all<{ key: string }>("SELECT key FROM settings WHERE key LIKE 'tiktok_verify:%'")).map((r) => r.key.slice("tiktok_verify:".length));
   return (
     <Section title="Connections">
       <div className="grid gap-3 md:grid-cols-2">
@@ -264,39 +266,118 @@ function Connections({ accountId, igHandle }: { accountId: number; igHandle: str
           {ig ? (
             <>
               <p className="mt-2 text-[13px] text-muted">
-                Connected as <span className="text-fg">@{ig.username}</span>. The Publisher posts scheduled pieces automatically and keeps the
-                token refreshed{ig.expires_at ? ` (currently valid until ${new Date(ig.expires_at).toLocaleDateString("en-GB", { day: "numeric", month: "short" })})` : ""}.
+                Connected as <span className="text-fg">@{ig.username}</span>
+                {ig.provider === "composio" ? (
+                  <>
+                    {" "}through Composio (account <span className="font-mono text-xs">{ig.provider_account_id}</span>). Composio keeps the login
+                    fresh; the Publisher posts scheduled pieces automatically every 5 minutes.
+                  </>
+                ) : (
+                  <>
+                    . The Publisher posts scheduled pieces automatically and keeps the token refreshed
+                    {ig.expires_at ? ` (currently valid until ${new Date(ig.expires_at).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "Asia/Beirut" })})` : ""}.
+                  </>
+                )}
               </p>
-              <form action={disconnect.bind(null, accountId, "instagram")} className="mt-3">
-                <SubmitButton className="btn btn-ghost btn-sm">Disconnect</SubmitButton>
-              </form>
+              {err && <p className="mt-2 text-xs text-bad">{err}</p>}
+              <div className="mt-3 flex gap-2">
+                {ig.provider === "composio" && (
+                  <form action={connectComposio.bind(null, accountId)}>
+                    <SubmitButton className="btn btn-ghost btn-sm" pending="Checking…">
+                      Re-check
+                    </SubmitButton>
+                  </form>
+                )}
+                <form action={disconnect.bind(null, accountId, "instagram")}>
+                  <SubmitButton className="btn btn-ghost btn-sm">Disconnect</SubmitButton>
+                </form>
+              </div>
             </>
           ) : (
-            <form action={connectInstagram.bind(null, accountId)} className="mt-3 space-y-3">
+            <div className="mt-3 space-y-3">
               <p className="text-[13px] leading-relaxed text-muted">
-                Paste the access token for {igHandle ? `@${igHandle}` : "this account"} from your Meta app (Instagram → API setup with Instagram
-                login → Generate token). Until it&apos;s connected, Instagram posts go to your phone page like TikTok.
+                Connect {igHandle ? `@${igHandle}` : "this account"} in Composio (Instagram, log in with Facebook), then press Connect here. Until it&apos;s
+                connected, Instagram posts go to your phone page like TikTok.
               </p>
-              <input name="token" type="password" autoComplete="off" placeholder="Instagram access token" className="input font-mono text-xs" />
+              <form action={connectComposio.bind(null, accountId)}>
+                <SubmitButton className="btn btn-sm" pending="Looking it up…">
+                  Connect via Composio
+                </SubmitButton>
+              </form>
               {err && <p className="text-xs text-bad">{err}</p>}
-              <SubmitButton className="btn btn-sm" pending="Checking…">
-                Connect
-              </SubmitButton>
-            </form>
+              <details className="text-[13px] text-muted">
+                <summary className="cursor-pointer text-dim">Or paste a Meta access token</summary>
+                <form action={connectInstagram.bind(null, accountId)} className="mt-2 space-y-2">
+                  <input name="token" type="password" autoComplete="off" placeholder="Instagram access token" className="input font-mono text-xs" />
+                  <SubmitButton className="btn btn-sm" pending="Checking…">
+                    Connect
+                  </SubmitButton>
+                </form>
+              </details>
+            </div>
           )}
         </div>
         <div className="panel p-5">
           <div className="flex items-center justify-between gap-3">
             <div className="text-sm font-medium">TikTok</div>
-            <Badge tone="info">Phone hand-off</Badge>
+            {tt ? <Badge tone="good">Connected</Badge> : <Badge tone="info">Phone hand-off</Badge>}
           </div>
-          <p className="mt-2 text-[13px] leading-relaxed text-muted">
-            TikTok only lets approved apps post publicly, so TikTok pieces appear on your phone page when they&apos;re due: download the video, copy the
-            caption, post it in the app with a trending sound, tap Posted.
-          </p>
-          <a href="/post" className="btn btn-sm mt-3">
-            Open the phone page
-          </a>
+          {tt ? (
+            <>
+              <p className="mt-2 text-[13px] leading-relaxed text-muted">
+                Connected as <span className="text-fg">@{tt.username}</span> through Composio and the AMX Publisher TikTok app. Open a TikTok post on
+                the Schedule page and press <span className="text-fg">Post via API</span> to choose its settings; it then posts automatically at its
+                time. Until TikTok approves the app, its posts are private and the account must be private.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <form action={connectTikTok.bind(null, accountId)}>
+                  <SubmitButton className="btn btn-ghost btn-sm" pending="Checking…">
+                    Re-check
+                  </SubmitButton>
+                </form>
+                <form action={disconnect.bind(null, accountId, "tiktok")}>
+                  <SubmitButton className="btn btn-ghost btn-sm">Disconnect</SubmitButton>
+                </form>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="mt-2 text-[13px] leading-relaxed text-muted">
+                Until TikTok is connected, TikTok pieces appear on your phone page when they&apos;re due: download, copy the caption, post in the app.
+                To post automatically: set up the TikTok app in Composio, log in with the account there, then press Connect.
+              </p>
+              <div className="mt-3 flex gap-2">
+                <form action={connectTikTok.bind(null, accountId)}>
+                  <SubmitButton className="btn btn-sm" pending="Looking it up…">
+                    Connect via Composio
+                  </SubmitButton>
+                </form>
+                <a href="/post" className="btn btn-ghost btn-sm">
+                  Phone page
+                </a>
+              </div>
+            </>
+          )}
+          {ttErr && <p className="mt-2 text-xs text-bad">{ttErr}</p>}
+          <details className="mt-4 text-[13px] text-muted">
+            <summary className="cursor-pointer text-dim">
+              TikTok URL ownership file{verifyFiles.length ? ` (${verifyFiles.length} saved)` : ""}
+            </summary>
+            <p className="mt-2 text-xs">
+              TikTok pulls videos from <span className="font-mono">/api/media/</span>. Paste the file TikTok gives you when you verify that URL prefix;
+              it&apos;s served at <span className="font-mono">/api/media/&lt;file name&gt;</span>.
+            </p>
+            {verifyFiles.map((f) => (
+              <a key={f} href={`/api/media/${f}`} className="mt-1 block font-mono text-xs underline">
+                {f}
+              </a>
+            ))}
+            <form action={saveTikTokVerification} className="mt-2 space-y-2">
+              <input name="name" placeholder="File name, e.g. tiktokAbC123.txt" className="input font-mono text-xs" />
+              <input name="body" placeholder="The line inside the file" className="input font-mono text-xs" />
+              <SubmitButton className="btn btn-sm">Save file</SubmitButton>
+            </form>
+          </details>
         </div>
       </div>
     </Section>

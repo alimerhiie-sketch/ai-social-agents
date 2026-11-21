@@ -96,3 +96,44 @@ export async function publish(userId: string, token: string, media: IgMedia, cap
   } catch {}
   return { mediaId, permalink };
 }
+
+// ---------------------------------------------------------------------------
+// Two-phase publishing for the cron (it runs every few minutes and shouldn't wait on video
+// processing): create the container now, check and publish it on a later tick.
+
+/** Starts processing; returns the container id to check later. Carousel children are short images, so they're awaited here. */
+export async function createContainer(userId: string, token: string, media: IgMedia, caption: string): Promise<string> {
+  if (media.kind === "reel") {
+    const j = await call("POST", `${userId}/media`, token, {
+      media_type: "REELS",
+      video_url: media.video,
+      caption,
+      share_to_feed: "true",
+      ...(media.cover ? { cover_url: media.cover } : {}),
+    });
+    return String(j.id);
+  }
+  if (media.kind === "image") return String((await call("POST", `${userId}/media`, token, { image_url: media.image, caption })).id);
+  const children: string[] = [];
+  for (const image of media.images.slice(0, 10)) {
+    children.push(String((await call("POST", `${userId}/media`, token, { image_url: image, is_carousel_item: "true" })).id));
+  }
+  for (const c of children) await waitFinished(c, token, () => {});
+  return String((await call("POST", `${userId}/media`, token, { media_type: "CAROUSEL", children: children.join(","), caption })).id);
+}
+
+/** FINISHED, IN_PROGRESS, ERROR, EXPIRED or PUBLISHED. */
+export async function containerStatus(containerId: string, token: string): Promise<{ code: string; detail: string }> {
+  const j = await call("GET", containerId, token, { fields: "status_code,status" });
+  return { code: String(j.status_code ?? ""), detail: String(j.status ?? "") };
+}
+
+export async function publishContainer(userId: string, token: string, containerId: string) {
+  const published = await call("POST", `${userId}/media_publish`, token, { creation_id: containerId });
+  const mediaId = String(published.id);
+  let permalink = "";
+  try {
+    permalink = String((await call("GET", mediaId, token, { fields: "permalink" })).permalink ?? "");
+  } catch {}
+  return { mediaId, permalink };
+}

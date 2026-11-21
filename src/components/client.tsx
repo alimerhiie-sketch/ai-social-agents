@@ -40,7 +40,7 @@ export function LiveIndicator() {
     const tick = async () => {
       try {
         const r = await fetch("/api/jobs/active", { cache: "no-store" });
-        const d = await r.json();
+        const d = (await r.json()) as { jobs: Active[] };
         if (!alive) return;
         setJobs(d.jobs);
         // A job just finished somewhere: refresh whatever page is open so new results appear.
@@ -170,24 +170,6 @@ export function FailureHelp({ error }: { error: string }) {
           This uses your subscription, not a paid API key.
         </div>
       )}
-    </div>
-  );
-}
-
-type Cli = { ok: boolean; loggedIn: boolean; version: string | null; detail: string };
-
-export function CliBanner() {
-  const [s, setS] = useState<Cli | null>(null);
-  useEffect(() => {
-    fetch("/api/cli", { cache: "no-store" })
-      .then((r) => r.json())
-      .then(setS)
-      .catch(() => {});
-  }, []);
-  if (!s || s.ok) return null;
-  return (
-    <div className="mb-8">
-      <FailureHelp error={`Agents can't run yet — ${s.detail}.`} />
     </div>
   );
 }

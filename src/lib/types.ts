@@ -101,7 +101,7 @@ export type ContentItem = {
 };
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
-export type JobKind = "strategy" | "trends" | "plan" | "from-trend" | "video" | "design" | "render" | "publish";
+export type JobKind = "strategy" | "trends" | "plan" | "from-trend" | "video" | "design" | "render" | "publish" | "develop" | "analyze" | "brief";
 
 export type Post = {
   id: number;
@@ -115,6 +115,8 @@ export type Post = {
   remote_id: string | null;
   permalink: string | null;
   error: string | null;
+  /** TikTok Direct Post settings the owner chose on the TikTok post screen (JSON TikTokOptions). */
+  tiktok_options: string | null;
   created_at: string;
 };
 
@@ -126,6 +128,12 @@ export type Connection = {
   token: string;
   expires_at: string | null;
   refreshed_at: string | null;
+  /** "graph" = our own Meta token in `token`; "composio" = Composio holds the token. */
+  provider: "graph" | "composio";
+  /** Composio connected account id (ca_…). */
+  provider_account_id: string | null;
+  /** Composio user id the connection belongs to. */
+  provider_user_id: string | null;
 };
 
 export type Job = {
@@ -137,6 +145,8 @@ export type Job = {
   depends_on: number | null;
   target_date: string | null;
   not_before?: string | null;
+  /** Approved agent upgrades this job ran with, as ",3,7," (see src/lib/agents/upgrades.ts). */
+  upgrade_ids?: string | null;
   status: JobStatus;
   model: string | null;
   summary: string | null;

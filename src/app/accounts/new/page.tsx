@@ -2,7 +2,7 @@ import { AccountForm } from "@/components/account-form";
 import { PageHeader } from "@/components/ui";
 import { createAccount } from "../../actions";
 
-export default function NewAccount() {
+export default async function NewAccount() {
   return (
     <>
       <PageHeader eyebrow="Accounts" title="New account">

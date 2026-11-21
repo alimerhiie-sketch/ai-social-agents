@@ -1,8 +1,6 @@
 name: Agent HQ runner
 
-# Started by the Worker (workflow_dispatch, ref=cloud) whenever work is queued.
-# No schedule on master: master doesn't have cloud/runner.ts yet, so a scheduled run here can only fail.
-# The cloud branch's copy keeps the nightly safety net; it becomes active once cloud is merged into master.
+# Started by the Worker (workflow_dispatch) whenever work is queued, plus a nightly safety net.
 # Does the heavy work: Claude Code agents on your subscription, painting, voice and Remotion rendering.
 
 on:
@@ -12,6 +10,8 @@ on:
         description: Why the runner was started
         required: false
         default: manual
+  schedule:
+    - cron: "17 1 * * *" # 03:17 Beirut — after the nightly cycle has queued the day's work
 
 concurrency:
   group: agent-hq-runner

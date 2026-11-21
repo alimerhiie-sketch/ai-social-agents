@@ -3,7 +3,7 @@ import { q } from "@/lib/db";
 import type { ContentItem } from "@/lib/types";
 import { AccountFilter } from "@/components/account-filter";
 import { SubmitButton } from "@/components/client";
-import { produceAllApproved } from "../actions";
+import { approveAllReview, approveAllScripted, produceAllApproved } from "../actions";
 import { Badge, FormatBadge, PageHeader, PlatformBadge } from "@/components/ui";
 import { prettyDate } from "@/lib/dates";
 
@@ -19,8 +19,8 @@ const COLUMNS: { status: string; title: string; hint: string; phase?: number }[]
 export default async function Pipeline({ searchParams }: { searchParams: Promise<{ account?: string }> }) {
   const sp = await searchParams;
   const accountId = sp.account ? Number(sp.account) : undefined;
-  const accounts = q.accounts();
-  const items = q.content({ accountId, limit: 500 });
+  const accounts = await q.accounts();
+  const items = await q.content({ accountId, limit: 500 });
   const names = new Map(accounts.map((a) => [a.id, a.name]));
   const rejected = items.filter((i) => i.status === "rejected");
 
@@ -55,6 +55,14 @@ export default async function Pipeline({ searchParams }: { searchParams: Promise
                   </div>
                   <span className="font-mono text-xs tabular-nums text-dim">{list.length}</span>
                 </div>
+                {/* Bulk approval: scripts → approved, rendered pieces → ready to post */}
+                {list.length > 0 && (col.status === "scripted" || col.status === "review") && (
+                  <form action={(col.status === "scripted" ? approveAllScripted : approveAllReview).bind(null, accountId)} className="px-2.5 pt-2.5">
+                    <SubmitButton className="btn btn-primary btn-sm w-full" pending="Approving…">
+                      Approve all {list.length}
+                    </SubmitButton>
+                  </form>
+                )}
                 <div className="flex flex-col gap-2 p-2.5">
                   {list.map((it) => (
                     <Card key={it.id} it={it} account={accountId ? null : (names.get(it.account_id) ?? null)} />
@@ -81,7 +89,7 @@ export default async function Pipeline({ searchParams }: { searchParams: Promise
   );
 }
 
-function Card({ it, account }: { it: ContentItem; account: string | null }) {
+async function Card({ it, account }: { it: ContentItem; account: string | null }) {
   return (
     <Link href={`/pipeline/${it.id}`} className="group block rounded-lg border border-line bg-bg p-3 transition-colors hover:border-line-2">
       <div className="flex flex-wrap items-center gap-1">

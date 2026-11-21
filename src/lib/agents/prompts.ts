@@ -1,13 +1,16 @@
-import { db, q } from "../db";
+import { q, sql } from "../db";
 import type { Account, Job } from "../types";
-import { longDate, weekdayShort } from "../dates";
-import { ART_STYLES } from "../options";
+import { longDate, TZ, weekdayShort } from "../dates";
+import { ART_STYLES, REEL_LOOKS, isReelLook } from "../options";
+import { developerPrompt } from "./developer";
+import { upgradesBlock } from "./upgrades";
+import { analysisPrompt, briefPrompt, dayMix, resultsBlock } from "../analytics/review";
 
 // Builds the task prompt for each job kind. Built when the job STARTS, not when it is
 // queued, so a "plan" job that follows a "trends" job sees the trends that were just found.
 
 const today = () =>
-  new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: TZ });
 
 function profile(a: Account) {
   return JSON.stringify(
@@ -23,6 +26,7 @@ function profile(a: Account) {
       allowed_formats: a.formats,
       allowed_video_styles: a.video_styles,
       allowed_art_styles: a.art_styles.length ? a.art_styles : ["ghibli"],
+      reel_looks: REEL_LOOKS.map((l) => `${l.id}: ${l.label} — ${l.when}`),
       recurring_character: a.character || "(none — invent scenes without a mascot)",
       daily_output: `${a.reels_per_day} short video(s) + ${a.posts_per_day} feed post(s) every day`,
       brand_colors: a.brand_colors,
@@ -34,13 +38,15 @@ function profile(a: Account) {
   );
 }
 
-function feedback(accountId: number) {
-  const approved = db
-    .prepare("SELECT title, format, hook FROM content WHERE account_id = ? AND status IN ('approved','producing','review','scheduled','posted') ORDER BY id DESC LIMIT 10")
-    .all(accountId) as { title: string; format: string; hook: string }[];
-  const rejected = db
-    .prepare("SELECT title, format, hook, feedback FROM content WHERE account_id = ? AND status = 'rejected' ORDER BY id DESC LIMIT 10")
-    .all(accountId) as { title: string; format: string; hook: string; feedback: string }[];
+async function feedback(accountId: number) {
+  const approved = await sql.all<{ title: string; format: string; hook: string }>(
+    "SELECT title, format, hook FROM content WHERE account_id = ? AND status IN ('approved','producing','review','ready','scheduled','posted') ORDER BY id DESC LIMIT 10",
+    accountId,
+  );
+  const rejected = await sql.all<{ title: string; format: string; hook: string; feedback: string }>(
+    "SELECT title, format, hook, feedback FROM content WHERE account_id = ? AND status = 'rejected' ORDER BY id DESC LIMIT 10",
+    accountId,
+  );
   if (!approved.length && !rejected.length) return "OWNER FEEDBACK\n(none yet — this is the first batch)";
   return [
     "OWNER FEEDBACK",
@@ -53,10 +59,8 @@ function feedback(accountId: number) {
   ].join("\n");
 }
 
-function recentContent(accountId: number) {
-  const rows = db
-    .prepare("SELECT title FROM content WHERE account_id = ? ORDER BY id DESC LIMIT 40")
-    .all(accountId) as { title: string }[];
+async function recentContent(accountId: number) {
+  const rows = await sql.all<{ title: string }>("SELECT title FROM content WHERE account_id = ? ORDER BY id DESC LIMIT 40", accountId);
   return rows.length ? rows.map((r) => `- ${r.title}`).join("\n") : "(none yet)";
 }
 
@@ -66,9 +70,19 @@ function strategyBlock(a: Account) {
     : "STRATEGY\n(no strategy yet — infer sensible pillars from the profile)";
 }
 
-export function buildPrompt(job: Job): string {
-  const a = job.account_id ? q.account(job.account_id) : null;
+/** The task prompt, plus any upgrades the owner approved for this agent (see upgrades.ts). */
+export async function buildPrompt(job: Job): Promise<string> {
+  const base = await basePrompt(job);
+  return base ? base + (await upgradesBlock(job)) : base;
+}
+
+async function basePrompt(job: Job): Promise<string> {
+  const a = job.account_id ? await q.account(job.account_id) : null;
   if (!a) throw new Error("Account not found for this job");
+  const fb = await feedback(a.id);
+  const recent = await recentContent(a.id);
+  // Real post results from the Analyst (empty until the first weekly report).
+  const results = job.kind === "strategy" || job.kind === "plan" || job.kind === "from-trend" ? await resultsBlock(a.id) : "";
 
   switch (job.kind) {
     case "strategy":
@@ -80,16 +94,19 @@ export function buildPrompt(job: Job): string {
         profile(a),
         "",
         a.strategy ? `CURRENT STRATEGY (revise it; keep what still makes sense)\n${JSON.stringify(a.strategy, null, 2)}` : "",
-        feedback(a.id),
+        fb,
+        "",
+        results,
         "",
         "Research briefly (3–5 searches) to see what is winning in this niche, then return the strategy as structured output.",
         `The owner has fixed the daily output: ${a.reels_per_day} short video(s) and ${a.posts_per_day} feed post(s) (carousel or single image) EVERY day = ${7 * (a.reels_per_day + a.posts_per_day)} pieces a week. Build the format mix, cadence and best posting times around exactly that. Only use formats from allowed_formats.`,
       ].join("\n");
 
     case "trends": {
-      const seen = db
-        .prepare("SELECT title FROM trends WHERE account_id = ? AND created_at > datetime('now','-21 days') ORDER BY id DESC LIMIT 60")
-        .all(a.id) as { title: string }[];
+      const seen = await sql.all<{ title: string }>(
+        "SELECT title FROM trends WHERE account_id = ? AND created_at > datetime('now','-21 days') ORDER BY id DESC LIMIT 60",
+        a.id,
+      );
       return [
         `Today is ${today()}.`,
         "Scan for what is trending RIGHT NOW that this account could turn into content.",
@@ -114,20 +131,34 @@ export function buildPrompt(job: Job): string {
       const posts = feedFormats.length ? a.posts_per_day : 0;
       const n = reels + posts;
       if (n === 0) throw new Error("This account's daily mix is 0 reels and 0 posts");
-      const sameWeek = db
-        .prepare(
-          "SELECT planned_date, format, title, pillar FROM content WHERE account_id = ? AND planned_date BETWEEN date(?, '-6 days') AND date(?, '+6 days') AND status != 'rejected' ORDER BY planned_date",
-        )
-        .all(a.id, date, date) as { planned_date: string; format: string; title: string; pillar: string }[];
-      const trends = db
-        .prepare("SELECT title, summary, angle, format, fit_score, momentum, time_sensitivity FROM trends WHERE account_id = ? AND status = 'new' AND created_at > datetime('now','-7 days') ORDER BY fit_score DESC LIMIT 12")
-        .all(a.id) as Record<string, string | number>[];
+      // The Manager's weekly mix (from results): which feed formats today, and an art style per piece.
+      const mix = await dayMix(a, date);
+      const feedToday = mix?.feed.length === posts ? mix.feed : [];
+      const countOf = (xs: string[]) => [...new Set(xs)].map((f) => `${xs.filter((x) => x === f).length} "${f}"`).join(" + ");
+      const sameWeek = await sql.all<{ planned_date: string; format: string; title: string; pillar: string }>(
+        "SELECT planned_date, format, title, pillar FROM content WHERE account_id = ? AND planned_date BETWEEN date(?, '-6 days') AND date(?, '+6 days') AND status != 'rejected' ORDER BY planned_date",
+        a.id,
+        date,
+        date,
+      );
+      const trends = await sql.all<Record<string, string | number>>(
+        "SELECT title, summary, angle, format, fit_score, momentum, time_sensitivity FROM trends WHERE account_id = ? AND status = 'new' AND created_at > datetime('now','-7 days') ORDER BY fit_score DESC LIMIT 12",
+        a.id,
+      );
       return [
         `Today is ${today()}. You are scripting the posts for ${longDate(date)}.`,
         "",
         "THE DAY'S MIX (exact — return exactly these, no more, no less)",
         `- ${reels} short video${reels === 1 ? "" : "s"}: format "reel"`,
-        `- ${posts} feed post${posts === 1 ? "" : "s"}: format ${feedFormats.map((f) => `"${f}"`).join(" or ")}${feedFormats.length > 1 ? " (mix them; carousels for teaching, single posts for one bold idea)" : ""}`,
+        feedToday.length
+          ? `- ${posts} feed post${posts === 1 ? "" : "s"}: ${countOf(feedToday)} (set by the Manager's weekly mix, from the results)`
+          : `- ${posts} feed post${posts === 1 ? "" : "s"}: format ${feedFormats.map((f) => `"${f}"`).join(" or ")}${feedFormats.length > 1 ? " (mix them; carousels for teaching, single posts for one bold idea)" : ""}`,
+        mix?.styles.length && posts
+          ? `- Art styles for today's feed posts (the Manager's weekly mix; any order): ${mix.styles.slice(0, posts).map((s) => `"${s}"`).join(", ")}`
+          : "",
+        reels
+          ? `- Reels: you decide each reel's animation look (art_style = an id from reel_looks), matched to its topic and tone. Keep the feed a mix: "paper-blueprint" whenever the reel explains how something works, the others for everything else, and don't give two reels in a row the same look.`
+          : "",
         "Make the pieces of one day different from each other: different pillars, different hook styles. Space time-sensitive trends to the earliest days.",
         "",
         "ACCOUNT PROFILE",
@@ -144,9 +175,11 @@ export function buildPrompt(job: Job): string {
         sameWeek.length ? sameWeek.map((c) => `- ${c.planned_date} [${c.format}] ${c.title} (${c.pillar})`).join("\n") : "(nothing yet — this is the first day planned)",
         "",
         "OLDER CONTENT (do not repeat)",
-        recentContent(a.id),
+        recent,
         "",
-        feedback(a.id),
+        fb,
+        "",
+        results,
         "",
         `Return exactly ${n} items as structured output. Only use allowed_formats and allowed_video_styles. Set suggested_day to ${weekdayShort(date)}.`,
       ].join("\n");
@@ -154,7 +187,7 @@ export function buildPrompt(job: Job): string {
 
     case "video":
     case "design": {
-      const c = job.ref_id ? q.contentItem(job.ref_id) : null;
+      const c = job.ref_id ? await q.contentItem(job.ref_id) : null;
       if (!c) throw new Error("Content item not found for this job");
       const style = ART_STYLES.find((s) => s.id === (c.art_style || a.art_styles[0])) ?? ART_STYLES[0];
       const piece = {
@@ -169,12 +202,16 @@ export function buildPrompt(job: Job): string {
       };
       return [
         job.kind === "video"
-          ? "Turn this approved short-video script into a scene plan for the illustrated reel templates."
+          ? "Turn this approved short-video script into a motion-graphics beat plan (scenes = voice lines, beats = a new animated visual every 1–2.5 s)."
           : `Turn this approved ${c.format === "carousel" ? "carousel" : "single post"} into a slide plan.`,
+        job.kind === "video" && isReelLook(c.art_style) ? `LOOK (decided by the Strategist — use exactly this as \`look\`): ${c.art_style}` : "",
         "",
-        `ART STYLE (the image model adds it; don't repeat style words in imagePrompt): ${style.label}`,
-        `RECURRING CHARACTER: ${a.character ? "yes — set withCharacter true where the character appears, and never name or describe it in imagePrompt (the pipeline inserts its description)" : "none — set withCharacter false everywhere"}`,
+        `ART STYLE (the image model adds it to painted backdrops; don't repeat style words in imagePrompt): ${style.label}`,
+        job.kind === "video"
+          ? `RECURRING CHARACTER: ${a.character ? "yes — it is drawn and animated in code; use it via who 'mascot' in a scene or a 'character' beat, 2–3 times per reel." : "none — skip 'character' beats"}`
+          : `RECURRING CHARACTER: ${a.character ? "yes — set withCharacter true where the character appears, and never name or describe it in imagePrompt (the pipeline inserts its description)" : "none — set withCharacter false everywhere"}`,
         `ACCOUNT LANGUAGE: ${a.language}`,
+        ...(job.kind === "design" ? ["POSTER LOOK: slides render as bold flat posters drawn in code (no painted images; ignore the art style, leave imagePrompt empty)."] : []),
         "",
         "THE PIECE",
         JSON.stringify(piece, null, 2),
@@ -187,8 +224,17 @@ export function buildPrompt(job: Job): string {
     case "publish":
       return "";
 
+    case "develop":
+      return developerPrompt(job, a);
+
+    case "analyze":
+      return analysisPrompt(job, a);
+
+    case "brief":
+      return briefPrompt(job, a);
+
     case "from-trend": {
-      const t = job.ref_id ? q.trend(job.ref_id) : null;
+      const t = job.ref_id ? await q.trend(job.ref_id) : null;
       if (!t) throw new Error("Trend not found for this job");
       return [
         `Today is ${today()}.`,
@@ -203,9 +249,11 @@ export function buildPrompt(job: Job): string {
         strategyBlock(a),
         "",
         "RECENT CONTENT (do not repeat)",
-        recentContent(a.id),
+        recent,
         "",
-        feedback(a.id),
+        fb,
+        "",
+        results,
         "",
         `Return exactly 1 item as structured output, with trend_title set to "${t.title}". You may improve on the suggested angle. If the suggested format is not in allowed_formats, pick the best allowed one.`,
       ].join("\n");

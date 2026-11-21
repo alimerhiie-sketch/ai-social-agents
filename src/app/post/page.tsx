@@ -1,23 +1,29 @@
 import { q } from "@/lib/db";
-import { nowMs } from "@/lib/dates";
+import { localDayLabel, localTime, nowMs } from "@/lib/dates";
 import { captionFor } from "@/lib/publish/schedule";
 import { markPosted } from "../actions";
 import { CopyButton, SubmitButton } from "@/components/client";
 import { Badge, Empty, FormatBadge } from "@/components/ui";
-import type { Post } from "@/lib/types";
+import type { Account, ContentItem, Post } from "@/lib/types";
 
 // The phone page: everything to post by hand in the next 7 days, grouped by day, each with its slot
 // time. Either post when it's due, or sit down once and schedule the whole week inside the
 // Instagram / TikTok apps using the times shown, then tap "Scheduled" on each card.
 
-export default function PhoneQueue() {
+export default async function PhoneQueue() {
   const now = nowMs();
   const until = new Date(now + 7 * 86400_000).toISOString();
-  const posts = q.posts({ method: "phone", to: until, statuses: ["scheduled", "failed"] });
+  const posts = await q.posts({ method: "phone", to: until, statuses: ["scheduled", "failed"] });
+  const items = new Map<number, ContentItem | null>();
+  const accounts = new Map<number, Account | null>();
+  for (const p of posts) {
+    if (!items.has(p.content_id)) items.set(p.content_id, await q.contentItem(p.content_id));
+    if (!accounts.has(p.account_id)) accounts.set(p.account_id, await q.account(p.account_id));
+  }
 
   const days = new Map<string, Post[]>();
   for (const p of posts) {
-    const d = new Date(p.scheduled_at).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" });
+    const d = localDayLabel(p.scheduled_at);
     days.set(d, [...(days.get(d) ?? []), p]);
   }
 
@@ -47,13 +53,13 @@ export default function PhoneQueue() {
             <h2 className="sticky top-0 z-10 -mx-1 mb-3 bg-bg/95 px-1 py-2 text-sm font-semibold backdrop-blur">{day}</h2>
             <div className="space-y-4">
               {list.map((p) => {
-                const c = q.contentItem(p.content_id);
-                const a = q.account(p.account_id);
+                const c = items.get(p.content_id);
+                const a = accounts.get(p.account_id);
                 if (!c?.media || !a) return null;
                 const m = c.media;
                 const src = (f: string) => `/api/media/${m.dir}/${f}`;
                 const due = new Date(p.scheduled_at).getTime() <= now;
-                const time = new Date(p.scheduled_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+                const time = localTime(p.scheduled_at);
                 const caption = captionFor(a, c);
                 return (
                   <article key={p.id} className="panel overflow-hidden">

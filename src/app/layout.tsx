@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { LiveIndicator, NavLink } from "@/components/client";
-import "@/lib/agents/runner"; // boots the job queue with the server
+import { headers } from "next/headers";
+import { requireAuth } from "@/lib/auth";
+import { q } from "@/lib/db";
 import "./globals.css";
 
 export const dynamic = "force-dynamic";
@@ -21,10 +23,17 @@ const NAV = [
   { href: "/pipeline", label: "Pipeline", icon: "M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v5h-4z" },
   { href: "/schedule", label: "Schedule", icon: "M7 3v3m10-3v3M4 9h16M5 6h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1z" },
   { href: "/post", label: "Phone", icon: "M8 3h8a1 1 0 011 1v16a1 1 0 01-1 1H8a1 1 0 01-1-1V4a1 1 0 011-1zM11 18h2" },
+  { href: "/analytics", label: "Analytics", icon: "M4 20V10m6 10V4m6 16v-7m4 7H2" },
   { href: "/agents", label: "Agents", icon: "M12 3v3m0 12v3M3 12h3m12 0h3M7 7l2 2m6 6l2 2m0-10l-2 2M9 15l-2 2M12 9a3 3 0 100 6 3 3 0 000-6z" },
+  { href: "/upgrades", label: "Upgrades", icon: "M12 19V5M5 12l7-7 7 7M5 21h14" },
 ];
 
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default async function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+  await requireAuth();
+  // The cron builds Instagram's signed media links from this address, so remember it.
+  const host = (await headers()).get("host");
+  if (host && !host.startsWith("localhost") && (await q.setting("public_url", "")) !== `https://${host}`) await q.setSetting("public_url", `https://${host}`);
+
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable}`}>
       <body className="min-h-dvh">
@@ -40,7 +49,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
                 </div>
                 <div>
                   <div className="text-[14px] font-semibold tracking-[-0.01em]">Agent HQ</div>
-                  <div className="text-[11px] text-dim">Phase 3 · Publishing</div>
+                  <div className="text-[11px] text-dim">Cloud · runs 24/7</div>
                 </div>
               </div>
               <nav className="-mx-1 flex gap-1 overflow-x-auto md:mx-0 md:flex-col md:overflow-visible">

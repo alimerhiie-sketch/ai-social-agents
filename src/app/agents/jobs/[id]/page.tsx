@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { q } from "@/lib/db";
 import { agentById, JOB_KINDS } from "@/lib/agents/registry";
-import { readLog } from "@/lib/agents/runner";
+import { readLog } from "@/lib/queue";
 import { prettyDate } from "@/lib/dates";
 import { cancelJob } from "../../../actions";
 import { JobWatcher, SubmitButton } from "@/components/client";
@@ -9,12 +9,16 @@ import { duration, JobStatusBadge, PageHeader, TextLink, timeAgo } from "@/compo
 
 export default async function JobPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const job = q.job(Number(id));
+  const job = await q.job(Number(id));
   if (!job) notFound();
-  const account = job.account_id ? q.account(job.account_id) : null;
+  const account = job.account_id ? await q.account(job.account_id) : null;
   const agent = agentById(job.agent);
   const resultHref =
-    job.kind === "trends"
+    job.kind === "develop"
+      ? "/upgrades"
+      : job.kind === "analyze" || job.kind === "brief"
+      ? `/analytics?account=${job.account_id}`
+      : job.kind === "trends"
       ? `/trends?account=${job.account_id}`
       : job.kind === "strategy"
         ? `/accounts/${job.account_id}`
@@ -45,7 +49,7 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
           {job.duration_ms && <span>took {duration(job.duration_ms)}</span>}
         </span>
       </PageHeader>
-      <JobWatcher jobId={job.id} initial={{ job, log: readLog(job.id) }} resultHref={resultHref} />
+      <JobWatcher jobId={job.id} initial={{ job, log: await readLog(job.id) }} resultHref={resultHref} />
     </>
   );
 }

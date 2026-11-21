@@ -20,6 +20,8 @@ const FPS = 30;
 const AUDIO_DELAY = 6; // frames between a scene starting and its voice starting (matches Reel.tsx)
 const TAIL = 0.45; // seconds of air after each voice line
 const SLIDE_SETTLED_FRAME = 150;
+// 3D looks need WebGL; the GitHub runner has no GPU, so use the software path there.
+const GL = process.platform === "linux" ? { gl: "swangle" } : undefined;
 
 const say = (msg) => console.log(`PROGRESS ${msg}`);
 
@@ -115,10 +117,14 @@ async function renderReel(serveUrl) {
     const style = spec.artStyle ? styleById(spec.artStyle) : null;
     const seed = spec.seed ?? Math.floor(Math.random() * 1e6);
     const images = {};
-    const painted = spec.scenes.filter((s) => s.type === "illustration");
+    // Motion scenes may have one painted plate (an empty environment in the account's art style, shown far
+    // back and in the `painting` beat). The character is drawn in code, so plates never include it.
+    // Painted plates only belong to the brand look; the animation looks are fully drawn in code.
+    const wantsPaint = (s) => s.type === "illustration" || (s.type === "motion" && (!spec.look || spec.look === "brand") && String(s.imagePrompt || "").trim());
+    const painted = spec.scenes.filter(wantsPaint);
     let n = 0;
     for (const [i, s] of spec.scenes.entries()) {
-      if (s.type !== "illustration" || !style) continue;
+      if (!wantsPaint(s) || !style) continue;
       n++;
       const file = `img-${String(i + 1).padStart(2, "0")}.jpg`;
       const out = path.join(spec.outDir, file);
@@ -128,7 +134,10 @@ async function renderReel(serveUrl) {
         say(`Painting ${n}/${painted.length} (${style.label}): ${String(s.imagePrompt).slice(0, 70)}…`);
         const t0 = Date.now();
         // one seed per video, plus the character reference, keep the character and palette consistent
-        const r = await generateImage({ prompt: imagePrompt(s.imagePrompt || s.headline || "", style, s.withCharacter ? spec.character : null), seed, out, reference: s.withCharacter ? spec.characterRefReady : undefined });
+        const plate = s.type === "motion";
+        const scenePrompt = plate ? `Empty environment, no people, no characters, no figures: ${s.imagePrompt}` : s.imagePrompt || s.headline || "";
+        const withChar = !plate && s.withCharacter;
+        const r = await generateImage({ prompt: imagePrompt(scenePrompt, style, withChar ? spec.character : null), seed, out, reference: withChar ? spec.characterRefReady : undefined });
         say(`  ↳ ${r.provider} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
       }
       images[i] = `http://127.0.0.1:${port}/${file}`;
@@ -146,6 +155,7 @@ async function renderReel(serveUrl) {
         const secs = audio.audio.length / audio.sampling_rate;
         scene.audioSrc = `http://127.0.0.1:${port}/${file}`;
         scene.durationInFrames = Math.max(AUDIO_DELAY + Math.ceil((secs + TAIL) * FPS), 45);
+        scene.voiceFrames = Math.round(secs * FPS);
         scene.captions = captionsFor(s.voiceover, secs);
       } else {
         scene.durationInFrames = Math.max(45, Math.round((s.seconds || 3) * FPS));
@@ -153,8 +163,8 @@ async function renderReel(serveUrl) {
       scenes.push(scene);
     }
 
-    const inputProps = { scenes, palette: spec.palette, handle: spec.handle, showCaptions: spec.showCaptions ?? true, artStyle: spec.artStyle };
-    const composition = await selectComposition({ serveUrl, id: "Reel", inputProps });
+    const inputProps = { scenes, palette: spec.palette, handle: spec.handle, showCaptions: spec.showCaptions ?? true, artStyle: spec.artStyle, look: spec.look };
+    const composition = await selectComposition({ serveUrl, id: "Reel", inputProps, chromiumOptions: GL });
     const output = path.join(spec.outDir, "video.mp4");
     say(`Rendering ${composition.durationInFrames} frames (${(composition.durationInFrames / FPS).toFixed(1)}s)…`);
     let last = -1;
@@ -168,6 +178,7 @@ async function renderReel(serveUrl) {
       encodingBufferSize: "9000k",
       outputLocation: output,
       inputProps,
+      chromiumOptions: GL,
       onProgress: ({ progress }) => {
         const pct = Math.floor(progress * 10) * 10;
         if (pct !== last) {
@@ -179,7 +190,7 @@ async function renderReel(serveUrl) {
 
     // Cover frame: the hook once it has landed.
     const cover = path.join(spec.outDir, "cover.jpg");
-    await renderStill({ serveUrl, composition, frame: Math.min(50, composition.durationInFrames - 1), output: cover, inputProps, imageFormat: "jpeg", jpegQuality: 92 });
+    await renderStill({ serveUrl, composition, frame: Math.min(50, composition.durationInFrames - 1), output: cover, inputProps, imageFormat: "jpeg", jpegQuality: 92, chromiumOptions: GL });
 
     return { kind: "reel", files: ["video.mp4"], cover: "cover.jpg", durationSeconds: composition.durationInFrames / FPS };
   } finally {
@@ -189,34 +200,17 @@ async function renderReel(serveUrl) {
 
 // ---------- slides (carousel or single post) ----------
 async function renderSlides(serveUrl) {
+  // Feed posts are flat posters drawn in code: no image model, no character reference.
   const files = [];
   const n = spec.scenes.length;
-  const style = spec.artStyle ? styleById(spec.artStyle) : null;
-  const seed = spec.seed ?? Math.floor(Math.random() * 1e6);
-  const { server, port } = await serve(spec.outDir);
-  try {
-  for (const [i, s] of spec.scenes.entries()) {
-    const scene = { ...s };
-    if (scene.type === "illustration" && style) {
-      const file = `img-${String(i + 1).padStart(2, "0")}.jpg`;
-      const out = path.join(spec.outDir, file);
-      if (!(fs.existsSync(out) && fs.statSync(out).size > 10_000)) {
-        say(`Painting slide ${i + 1} (${style.label}): ${String(scene.imagePrompt).slice(0, 70)}…`);
-        const r = await generateImage({ prompt: imagePrompt(scene.imagePrompt || scene.headline || "", style, scene.withCharacter ? spec.character : null), seed, out, aspect: "feed", reference: scene.withCharacter ? spec.characterRefReady : undefined });
-        say(`  ↳ ${r.provider}`);
-      }
-      scene.imageSrc = `http://127.0.0.1:${port}/${file}`;
-    }
+  for (const [i, scene] of spec.scenes.entries()) {
     say(`Slide ${i + 1}/${n}`);
-    const inputProps = { scene, index: i, total: n, palette: spec.palette, handle: spec.handle, isCover: i === 0, artStyle: spec.artStyle };
+    const inputProps = { scene, index: i, total: n, palette: spec.palette, handle: spec.handle, isCover: i === 0, artStyle: spec.artStyle, mascot: !!spec.character };
     const composition = await selectComposition({ serveUrl, id: "Slide", inputProps });
     const file = `slide-${String(i + 1).padStart(2, "0")}.jpg`;
     // Instagram's publishing API takes JPEG, not PNG.
     await renderStill({ serveUrl, composition, frame: SLIDE_SETTLED_FRAME, output: path.join(spec.outDir, file), inputProps, imageFormat: "jpeg", jpegQuality: 94 });
     files.push(file);
-  }
-  } finally {
-    server.close();
   }
   return { kind: "slides", files, cover: files[0], durationSeconds: 0 };
 }
@@ -242,7 +236,7 @@ function nextReset() {
 }
 
 try {
-  spec.characterRefReady = await ensureCharacterRef();
+  spec.characterRefReady = spec.kind === "reel" ? await ensureCharacterRef() : null;
   const serveUrl = await getServeUrl();
   const result = spec.kind === "reel" ? await renderReel(serveUrl) : await renderSlides(serveUrl);
   console.log(`RESULT ${JSON.stringify(result)}`);

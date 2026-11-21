@@ -91,7 +91,7 @@ const contentItem = obj({
     obj({ heading: str(), body: str(), visual: str() }),
     "Carousel slides or the single post/story design. Empty array for videos.",
   ),
-  art_style: str("One of the account's allowed art style ids, the look for this piece"),
+  art_style: str("Reels: the animation look, one id from reel_looks. Feed posts: one of the account's allowed_art_styles"),
   caption: str("Full caption without hashtags"),
   hashtags: strs("3–5 hashtags without the # sign"),
   cta: str(),
@@ -105,8 +105,32 @@ export const planSchema = obj({
   items: list(contentItem),
 });
 
+const beat = obj({
+  say: str("The exact words of this scene's voiceover spoken during this beat, in order (3–8 words)"),
+  visual: en(["scene", "object", "title", "icon", "icons", "split", "counter", "bars", "versus", "flow", "meter", "character", "chat", "checklist", "painting"]),
+  text: str("On-screen words for the visual: title text, icon label, split phrase with | between chunks, meter limit label, speech bubble. '' for none"),
+  icon: str("Lucide icon name in kebab-case for icon / character prop, e.g. 'scissors', 'coins', 'message-circle'. '' for none"),
+  items: list(obj({ icon: str("Lucide icon name or ''"), label: str(), value: str() }), "Rows for icons / bars / versus / flow / chat / checklist; [] otherwise"),
+  number: str("counter: the figure, e.g. '100,000', '$20', '75%'. '' otherwise"),
+  level: num("meter fill or counter ring, 0–1. 0 otherwise"),
+  pose: en(["idle", "wave", "point", "think", "shrug", "cheer", "hold", "surprised"]),
+  transition: en(["cut", "whip", "zoom", "wipe", "iris"]),
+  set: en(["none", "desk", "park", "stage", "city"], "scene: where it happens"),
+  action: en(["stand", "wave", "point", "think", "shrug", "shock", "happy", "tired", "type", "phone", "sit", "walk", "present"], "scene: what the person does"),
+  who: en(["person", "mascot"], "scene: the relatable person, or the account's mascot"),
+  props: list(
+    obj({
+      kind: en(["calendar", "clock", "cups", "mug", "plant", "monitor", "phone", "sign", "chart", "money", "lightbulb", "papers", "books", "robot", "laptop"]),
+      label: str("calendar: day number; clock: time like '22:00'; cups: how many; sign: its words; chart: 'up' or 'down'; money: amount; else ''"),
+    }),
+    "scene: 0–3 animated props",
+  ),
+  shot: en(["wide", "close"]),
+  object: en(["none", "engine", "chip", "server", "brain", "gem", "globe", "phone", "coins", "cubes", "lock"], "object: the 3D hero object"),
+});
+
 const scene = obj({
-  type: en(["illustration", "hook", "statement", "list", "steps", "stat", "compare", "verdict", "cta"]),
+  type: en(["motion", "illustration", "hook", "statement", "list", "steps", "stat", "compare", "verdict", "cta"]),
   kicker: str(),
   headline: str(),
   subline: str(),
@@ -119,12 +143,123 @@ const scene = obj({
   scoreMax: int(),
   voiceover: str(),
   seconds: num(),
-  imagePrompt: str("illustration only: what the picture shows, no style words, never the character's name"),
+  imagePrompt: str("motion: an optional painted backdrop, an empty place with no people ('' for none). illustration (slides): what the picture shows. No style words, never the character's name"),
   withCharacter: { type: "boolean" },
   camera: en(["push-in", "pull-out", "pan-left", "pan-right", "rise", "drift"]),
+  beats: list(beat, "motion scenes: the visual beats over this voice line, one every 1–2.5 s. [] for slides"),
 });
 
 export const scenePlanSchema = obj({
-  notes: str("One sentence on the visual story / metaphor running through the piece"),
+  notes: str("One sentence on the visual idea running through the piece"),
+  look: en(["paper-blueprint", "paper", "blueprint", "doodle", "lofi", "cosmic", "brand"], "Reels: the animation style of the whole video (the Strategist's LOOK when given). Slides: 'brand'"),
   scenes: list(scene),
+});
+
+/** Agent Developer: upgrade proposals for the other agents. Nothing is applied until the owner approves it. */
+export const UPGRADE_TARGETS = ["trend-scout", "strategist", "designer", "video-producer"] as const;
+
+export const developerSchema = obj({
+  notes: str("2–4 sentences: what the evidence showed this week and where the biggest gains are."),
+  evaluated_sources: list(
+    obj({
+      url: str("The page or skill you read"),
+      for_agent: en([...UPGRADE_TARGETS, "general"]),
+      verdict: en(["adopted", "partly-adopted", "rejected", "unsafe"]),
+      reason: str("One sentence: fit, quality, recency — or the injection/unsafe content you saw"),
+    }),
+    "Every source you seriously considered, including the ones you rejected",
+  ),
+  proposals: list(
+    obj({
+      target_agent: en([...UPGRADE_TARGETS]),
+      focus: str("What it improves, 2–5 words, e.g. 'reel hooks', 'caption keywords', 'beat variety'"),
+      title: str("Short imperative title the owner can scan, max 10 words"),
+      kind: en(["add", "replace"]),
+      before: str("replace: the exact passage copied from the agent's current instructions or an applied upgrade. add: ''"),
+      after: str("The full new instruction text for the agent, 40–250 words, no links, no code"),
+      source_type: en(["web-skill", "web-article", "own-results", "owner-feedback", "mixed"]),
+      source_url: str("The main source URL, or '' when it comes only from our own results"),
+      evidence: str("What in our own data supports it (job #, content titles, owner's words), or 'research only'"),
+      why: str("Expected effect in one or two sentences"),
+      success_metric: str("How next week's run can tell if it worked, using data we have"),
+      quality_score: int("0–100, your honest confidence this improves results"),
+      risk_notes: str("Anything that could go wrong, or ''"),
+    }),
+    "3–8 proposals, best expected impact first, at most 3 per agent",
+  ),
+});
+
+/** Analyst: the weekly results report. Numbers come from Instagram insights we collected; the agent explains them. */
+const piece = obj({
+  content_id: int("The piece's content id (#) from the data"),
+  title: str(),
+  numbers: str("Its key numbers, e.g. '68 views · 62 reach · 74.6% skipped in 3 s · 2.8 s avg watch'"),
+  why: str("Your best explanation, tied to the hook, format, topic, art style or time — say so when it's a guess"),
+});
+
+export const analystSchema = obj({
+  headline: str("One sentence: the week in numbers"),
+  data_quality: str("1–2 sentences: how much data there is and what it cannot tell yet (few posts, young posts, TikTok not tracked)"),
+  worked: strs("What worked, each point with its numbers. [] if nothing stood out"),
+  didnt_work: strs("What didn't, each point with its numbers"),
+  best: list(piece, "Up to 3 best pieces, best first"),
+  worst: list(piece, "Up to 3 worst pieces, worst first"),
+  formats: list(
+    obj({
+      format: en(["reel", "carousel", "post", "story"]),
+      pieces: int(),
+      avg_views: num(),
+      avg_reach: num(),
+      avg_interactions: num(),
+      verdict: str("One sentence"),
+    }),
+    "One row per format posted in the window",
+  ),
+  hooks: str("Which hook styles held attention (skip rate and watch time for reels, reach for posts) and which didn't, with examples"),
+  topics: str("Which pillars, topics or trends pulled views, and which didn't"),
+  art_styles: str("Differences between art styles, or 'not enough data yet'"),
+  posting_times: str("Best and worst posting slots so far, with numbers, or 'not enough data yet'"),
+  follower_growth: obj({
+    start: int("Followers at the start of the window"),
+    end: int("Followers now"),
+    change: int(),
+    note: str("What drove it, if anything can tell"),
+  }),
+  recommendations: list(
+    obj({
+      area: en(["hooks", "formats", "topics", "art-style", "captions", "posting-times", "length", "other"]),
+      recommendation: str("One concrete instruction the Strategist can follow when scripting, one sentence"),
+      evidence: str("The numbers behind it"),
+      priority: en(["high", "medium", "low"]),
+    }),
+    "3–6 recommendations for the Strategist, highest priority first",
+  ),
+});
+
+/** Manager: the weekly brief for the owner, plus next week's mix within what the owner enabled. */
+export const managerSchema = obj({
+  headline: str("One sentence for the owner: the state of the account this week"),
+  account_state: str("3–5 sentences with numbers: followers, reach, what is working, what is not"),
+  next_week: strs("2–5 things the team will do differently next week, each tied to the Analyst's evidence"),
+  mix: obj({
+    feed_formats: list(
+      obj({ format: en(["carousel", "post"]), share_percent: int() }),
+      "Split of the daily feed posts between carousels and single posts. Only formats in enabled_formats; shares sum to 100",
+    ),
+    art_styles: list(
+      obj({ art_style: str("An id from enabled_art_styles"), share_percent: int() }),
+      "Split of next week's pieces across art styles. Only ids from enabled_art_styles; shares sum to 100",
+    ),
+    focus: str("One sentence of creative focus for the Strategist next week (hook style, pillar or topic to push)"),
+    reason: str("Why this mix, citing the numbers. If the data is too thin to move, keep the current mix and say so"),
+  }),
+  decisions: list(
+    obj({
+      question: str("A decision only the owner can make, as a question"),
+      why: str("The evidence or problem behind it"),
+      recommendation: str("What you'd do"),
+    }),
+    "Posting volume or times, enabling a new format or art style, connecting TikTok, approvals piling up… [] if none",
+  ),
+  risks: strs("Anything going wrong: failed posts, an empty schedule, pieces waiting for approval. [] if none"),
 });
