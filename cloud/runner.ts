@@ -132,7 +132,32 @@ function describeTool(name: string, input: Record<string, unknown>) {
 }
 
 /** True when the run hit the subscription's usage limit (so we pause instead of failing). */
-const usageLimited = (text: string) => /usage limit|rate limit|limit reached|try again (later|at)/i.test(text);
+const usageLimited = (text: string) => /usage limit|rate limit|limit reached|hit your .*limit|\d+-hour limit|weekly limit|try again (later|at)|resets \d/i.test(text);
+
+/**
+ * When to retry after a usage limit. Claude Code says e.g. "You've hit your 5-hour limit · resets 4am (UTC)":
+ * use that time (next occurrence, plus a few minutes). Anything else, or another time zone: one hour.
+ */
+function limitRetryAt(text: string, now = new Date()): string {
+  const m = /resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*\(UTC\)/i.exec(text);
+  if (m) {
+    const ap = m[3]?.toLowerCase();
+    const h = ap ? (Number(m[1]) % 12) + (ap === "pm" ? 12 : 0) : Number(m[1]);
+    const t = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), h, Number(m[2] ?? 0)));
+    if (t.getTime() <= now.getTime()) t.setUTCDate(t.getUTCDate() + 1);
+    t.setUTCMinutes(t.getUTCMinutes() + 5);
+    return t.toISOString();
+  }
+  return new Date(now.getTime() + 60 * 60_000).toISOString();
+}
+
+/** Out of subscription usage for now: put the job back until the limit resets instead of failing it. */
+async function pauseForLimit(job: Job, msg: string): Promise<never> {
+  const at = limitRetryAt(msg);
+  await sql.run("UPDATE jobs SET status = 'queued', not_before = ?, runner_id = NULL WHERE id = ?", at, job.id);
+  await log(job.id, `⏸ Claude usage limit reached — retrying after ${at.slice(11, 16)} UTC`);
+  throw new UsageLimit();
+}
 
 async function runAgent(job: Job) {
   const started = Date.now();
@@ -193,16 +218,14 @@ async function runAgent(job: Job) {
     if ((job.kind === "video" || job.kind === "design") && job.ref_id) await contentBack(job.ref_id);
     await finish(job, "failed", null, msg, started, cost);
   };
-  if (!res) return fail(stderr.trim().split("\n").slice(-3).join(" ") || `Claude Code exited with code ${code} and no result`);
+  if (!res) {
+    const tail = stderr.trim().split("\n").slice(-3).join(" ");
+    if (usageLimited(tail)) return pauseForLimit(job, tail);
+    return fail(tail || `Claude Code exited with code ${code} and no result`);
+  }
   if (res.is_error) {
     const msg = String(res.result || res.subtype || "Agent reported an error");
-    if (usageLimited(msg)) {
-      // Out of subscription usage for now: put the job back for an hour instead of failing it.
-      const at = new Date(Date.now() + 60 * 60_000).toISOString();
-      await sql.run("UPDATE jobs SET status = 'queued', not_before = ?, runner_id = NULL WHERE id = ?", at, job.id);
-      await log(job.id, `⏸ Claude usage limit reached — retrying after ${at.slice(11, 16)} UTC`);
-      throw new UsageLimit();
-    }
+    if (usageLimited(msg)) return pauseForLimit(job, msg);
     return fail(msg);
   }
   try {
