@@ -23,6 +23,7 @@ const NAV = [
   { href: "/pipeline", label: "Pipeline", icon: "M4 5h4v14H4zM10 5h4v9h-4zM16 5h4v5h-4z" },
   { href: "/schedule", label: "Schedule", icon: "M7 3v3m10-3v3M4 9h16M5 6h14a1 1 0 011 1v12a1 1 0 01-1 1H5a1 1 0 01-1-1V7a1 1 0 011-1z" },
   { href: "/post", label: "Phone", icon: "M8 3h8a1 1 0 011 1v16a1 1 0 01-1 1H8a1 1 0 01-1-1V4a1 1 0 011-1zM11 18h2" },
+  { href: "/analytics", label: "Analytics", icon: "M4 20V10m6 10V4m6 16v-7m4 7H2" },
   { href: "/agents", label: "Agents", icon: "M12 3v3m0 12v3M3 12h3m12 0h3M7 7l2 2m6 6l2 2m0-10l-2 2M9 15l-2 2M12 9a3 3 0 100 6 3 3 0 000-6z" },
   { href: "/upgrades", label: "Upgrades", icon: "M12 19V5M5 12l7-7 7 7M5 21h14" },
 ];

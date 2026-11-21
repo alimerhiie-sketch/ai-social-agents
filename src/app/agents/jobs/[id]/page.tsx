@@ -16,6 +16,8 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   const resultHref =
     job.kind === "develop"
       ? "/upgrades"
+      : job.kind === "analyze" || job.kind === "brief"
+      ? `/analytics?account=${job.account_id}`
       : job.kind === "trends"
       ? `/trends?account=${job.account_id}`
       : job.kind === "strategy"

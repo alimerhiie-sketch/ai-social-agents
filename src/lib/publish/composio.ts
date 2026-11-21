@@ -82,8 +82,11 @@ async function rpc(key: string, body: Json, sessionId?: string): Promise<{ sessi
   return { sessionId: sid, msg: JSON.parse(text) as Json };
 }
 
-/** Calls one Connect meta-tool and returns its parsed JSON result. */
-async function mcpTool(name: string, args: Json): Promise<Json> {
+/**
+ * Calls one Connect meta-tool and returns its parsed JSON result. With `partial`, a reply flagged as an
+ * error is still returned when it parses (COMPOSIO_MULTI_EXECUTE_TOOL flags the whole call when one tool fails).
+ */
+async function mcpTool(name: string, args: Json, partial = false): Promise<Json> {
   const key = await apiKey();
   const init = await rpc(key, {
     jsonrpc: "2.0",
@@ -98,12 +101,13 @@ async function mcpTool(name: string, args: Json): Promise<Json> {
   if (r.msg.error) throw new Error(`Composio Connect: ${JSON.stringify(r.msg.error).slice(0, 300)}`);
   const result = (r.msg.result ?? {}) as { content?: { type: string; text?: string }[]; isError?: boolean };
   const text = result.content?.find((c) => c.type === "text")?.text ?? "";
-  if (result.isError) throw new Error(`Composio Connect (${name}): ${text.slice(0, 300)}`);
+  let parsed: Json | null = null;
   try {
-    return JSON.parse(text) as Json;
-  } catch {
-    throw new Error(`Composio Connect (${name}): unexpected reply ${text.slice(0, 200)}`);
-  }
+    parsed = JSON.parse(text) as Json;
+  } catch {}
+  if (result.isError && !(partial && parsed)) throw new Error(`Composio Connect (${name}): ${text.slice(0, 300)}`);
+  if (!parsed) throw new Error(`Composio Connect (${name}): unexpected reply ${text.slice(0, 200)}`);
+  return parsed;
 }
 
 /** Runs one Composio tool. Throws with the tool's own error message when it fails. */
@@ -129,6 +133,48 @@ export async function run(conn: ComposioConn, slug: string, args: Json): Promise
   });
   if (!j.successful) throw new Error(`Instagram (${slug}): ${errText(j.error)}`);
   return (j.data ?? {}) as Json;
+}
+
+export type RunResult = { ok: true; data: Json } | { ok: false; error: string };
+
+/**
+ * Runs several independent read-only tools. With a Connect key they go out together in one
+ * COMPOSIO_MULTI_EXECUTE_TOOL call (25 per call), so a batch of insights costs one MCP round trip.
+ * One tool failing doesn't fail the others.
+ */
+export async function runMany(conn: ComposioConn, calls: { slug: string; args: Json }[], thought: string): Promise<RunResult[]> {
+  if (!calls.length) return [];
+  if (!(await isConsumerKey()))
+    return Promise.all(
+      calls.map((c) =>
+        run(conn, c.slug, c.args).then(
+          (data): RunResult => ({ ok: true, data }),
+          (e: Error): RunResult => ({ ok: false, error: e.message }),
+        ),
+      ),
+    );
+  const out: RunResult[] = [];
+  for (let i = 0; i < calls.length; i += 25) {
+    const chunk = calls.slice(i, i + 25);
+    const outer = await mcpTool(
+      "COMPOSIO_MULTI_EXECUTE_TOOL",
+      {
+        tools: chunk.map((c) => ({ tool_slug: c.slug, arguments: c.args, account: conn.connectedAccountId })),
+        sync_response_to_workbench: false,
+        thought,
+        current_step: "READING_INSIGHTS",
+      },
+      true,
+    );
+    const results = ((outer.data ?? {}) as Json).results as Json[] | undefined;
+    if (!Array.isArray(results)) throw new Error(`Composio: ${errText(outer.error)}`);
+    chunk.forEach((_, j) => {
+      const item = results.find((r) => r.index === j) ?? results[j] ?? {};
+      const resp = (item.response ?? {}) as Json;
+      out.push(resp.successful ? { ok: true, data: (resp.data ?? {}) as Json } : { ok: false, error: errText(resp.error ?? item.error) });
+    });
+  }
+  return out;
 }
 
 const errText = (e: unknown) => (e == null ? "failed" : typeof e === "string" ? e : JSON.stringify(e)).slice(0, 400);

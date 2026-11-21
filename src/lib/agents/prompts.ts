@@ -4,6 +4,7 @@ import { longDate, TZ, weekdayShort } from "../dates";
 import { ART_STYLES } from "../options";
 import { developerPrompt } from "./developer";
 import { upgradesBlock } from "./upgrades";
+import { analysisPrompt, briefPrompt, dayMix, resultsBlock } from "../analytics/review";
 
 // Builds the task prompt for each job kind. Built when the job STARTS, not when it is
 // queued, so a "plan" job that follows a "trends" job sees the trends that were just found.
@@ -79,6 +80,8 @@ async function basePrompt(job: Job): Promise<string> {
   if (!a) throw new Error("Account not found for this job");
   const fb = await feedback(a.id);
   const recent = await recentContent(a.id);
+  // Real post results from the Analyst (empty until the first weekly report).
+  const results = job.kind === "strategy" || job.kind === "plan" || job.kind === "from-trend" ? await resultsBlock(a.id) : "";
 
   switch (job.kind) {
     case "strategy":
@@ -91,6 +94,8 @@ async function basePrompt(job: Job): Promise<string> {
         "",
         a.strategy ? `CURRENT STRATEGY (revise it; keep what still makes sense)\n${JSON.stringify(a.strategy, null, 2)}` : "",
         fb,
+        "",
+        results,
         "",
         "Research briefly (3–5 searches) to see what is winning in this niche, then return the strategy as structured output.",
         `The owner has fixed the daily output: ${a.reels_per_day} short video(s) and ${a.posts_per_day} feed post(s) (carousel or single image) EVERY day = ${7 * (a.reels_per_day + a.posts_per_day)} pieces a week. Build the format mix, cadence and best posting times around exactly that. Only use formats from allowed_formats.`,
@@ -125,6 +130,10 @@ async function basePrompt(job: Job): Promise<string> {
       const posts = feedFormats.length ? a.posts_per_day : 0;
       const n = reels + posts;
       if (n === 0) throw new Error("This account's daily mix is 0 reels and 0 posts");
+      // The Manager's weekly mix (from results): which feed formats today, and an art style per piece.
+      const mix = await dayMix(a, date);
+      const feedToday = mix?.feed.length === posts ? mix.feed : [];
+      const countOf = (xs: string[]) => [...new Set(xs)].map((f) => `${xs.filter((x) => x === f).length} "${f}"`).join(" + ");
       const sameWeek = await sql.all<{ planned_date: string; format: string; title: string; pillar: string }>(
         "SELECT planned_date, format, title, pillar FROM content WHERE account_id = ? AND planned_date BETWEEN date(?, '-6 days') AND date(?, '+6 days') AND status != 'rejected' ORDER BY planned_date",
         a.id,
@@ -140,7 +149,12 @@ async function basePrompt(job: Job): Promise<string> {
         "",
         "THE DAY'S MIX (exact — return exactly these, no more, no less)",
         `- ${reels} short video${reels === 1 ? "" : "s"}: format "reel"`,
-        `- ${posts} feed post${posts === 1 ? "" : "s"}: format ${feedFormats.map((f) => `"${f}"`).join(" or ")}${feedFormats.length > 1 ? " (mix them; carousels for teaching, single posts for one bold idea)" : ""}`,
+        feedToday.length
+          ? `- ${posts} feed post${posts === 1 ? "" : "s"}: ${countOf(feedToday)} (set by the Manager's weekly mix, from the results)`
+          : `- ${posts} feed post${posts === 1 ? "" : "s"}: format ${feedFormats.map((f) => `"${f}"`).join(" or ")}${feedFormats.length > 1 ? " (mix them; carousels for teaching, single posts for one bold idea)" : ""}`,
+        mix?.styles.length
+          ? `- Art styles for today's ${n} pieces (the Manager's weekly mix; one each, any order): ${mix.styles.map((s) => `"${s}"`).join(", ")}`
+          : "",
         "Make the pieces of one day different from each other: different pillars, different hook styles. Space time-sensitive trends to the earliest days.",
         "",
         "ACCOUNT PROFILE",
@@ -160,6 +174,8 @@ async function basePrompt(job: Job): Promise<string> {
         recent,
         "",
         fb,
+        "",
+        results,
         "",
         `Return exactly ${n} items as structured output. Only use allowed_formats and allowed_video_styles. Set suggested_day to ${weekdayShort(date)}.`,
       ].join("\n");
@@ -205,6 +221,12 @@ async function basePrompt(job: Job): Promise<string> {
     case "develop":
       return developerPrompt(job, a);
 
+    case "analyze":
+      return analysisPrompt(job, a);
+
+    case "brief":
+      return briefPrompt(job, a);
+
     case "from-trend": {
       const t = job.ref_id ? await q.trend(job.ref_id) : null;
       if (!t) throw new Error("Trend not found for this job");
@@ -224,6 +246,8 @@ async function basePrompt(job: Job): Promise<string> {
         recent,
         "",
         fb,
+        "",
+        results,
         "",
         `Return exactly 1 item as structured output, with trend_title set to "${t.title}". You may improve on the suggested angle. If the suggested format is not in allowed_formats, pick the best allowed one.`,
       ].join("\n");

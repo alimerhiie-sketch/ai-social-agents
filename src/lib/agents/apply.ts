@@ -2,6 +2,7 @@ import { q, sql } from "../db";
 import type { Job, Strategy } from "../types";
 import { prettyDate, weekdayShort } from "../dates";
 import { storeProposals, type ProposalOut } from "./upgrades";
+import { applyAnalysis, applyBrief } from "../analytics/review";
 
 // Writes an agent's structured output into the database. Returns a one-line summary.
 
@@ -55,6 +56,10 @@ export async function applyResult(job: Job, data: unknown): Promise<string> {
       const painted = plan.scenes.filter((s) => s.type === "illustration").length;
       return `${plan.scenes.length} slides planned (${painted} illustrated) — rendering next`;
     }
+    case "analyze":
+      return applyAnalysis(job, data);
+    case "brief":
+      return applyBrief(job, data);
     case "render":
       return "Rendered";
     case "publish":

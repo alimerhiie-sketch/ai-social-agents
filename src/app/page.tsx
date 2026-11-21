@@ -4,11 +4,16 @@ import { AGENTS, JOB_KINDS } from "@/lib/agents/registry";
 import { runCycle } from "./actions";
 import { SubmitButton } from "@/components/client";
 import { Badge, Empty, JobStatusBadge, PageHeader, Section, TextLink, timeAgo } from "@/components/ui";
+import { BriefCard } from "@/components/reports";
+import { currentMix, latestReport, REVIEW_WEEKDAY } from "@/lib/analytics/review";
 
 export default async function Overview() {
   const accounts = await q.accounts();
   const counts = new Map(await Promise.all(accounts.map(async (a) => [a.id, await q.counts(a.id)] as const)));
   const jobs = await q.jobs({ limit: 8 });
+  const briefs = (
+    await Promise.all(accounts.map(async (a) => ({ a, brief: await latestReport(a.id, "brief"), mix: await currentMix(a) })))
+  ).filter((b) => b.brief);
 
   return (
     <>
@@ -25,6 +30,22 @@ export default async function Overview() {
         further until you approve it.
       </PageHeader>
 
+      {accounts.length > 0 && (
+        <Section title="This week's brief" aside={<TextLink href="/analytics">Analytics</TextLink>}>
+          {briefs.length === 0 ? (
+            <div className="panel px-5 py-4 text-sm text-muted">
+              The Manager&apos;s first brief comes after the Analyst&apos;s weekly review on {REVIEW_WEEKDAY === "Sun" ? "Sunday" : REVIEW_WEEKDAY} night
+              (or run it now from Analytics).
+            </div>
+          ) : (
+            <div className="flex flex-col gap-4">
+              {briefs.map(({ a, brief, mix }) => (
+                <BriefCard key={a.id} brief={brief!} mix={mix} accountName={accounts.length > 1 ? a.name : undefined} />
+              ))}
+            </div>
+          )}
+        </Section>
+      )}
 
       <Section title="Accounts">
         {accounts.length === 0 ? (

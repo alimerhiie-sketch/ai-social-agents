@@ -4,6 +4,7 @@ import { TZ } from "../dates";
 import { agentById } from "./registry";
 import { UPGRADE_TARGETS } from "./schemas";
 import { describeOutcome, upgradeEffect, type AgentUpgrade } from "./upgrades";
+import { latestReport, metricText, postsWithMetrics } from "../analytics/review";
 
 // The Agent Developer's task prompt: everything it needs to coach the other agents, from our own data.
 // Runs on the GitHub Actions runner (Node), which has the repo checked out, so it reads the agent files directly.
@@ -46,11 +47,9 @@ export async function developerPrompt(job: Job, a: Account): Promise<string> {
      GROUP BY j.ref_id, j.kind HAVING COUNT(*) > 1 ORDER BY n DESC LIMIT 10`,
     a.id,
   );
-  const posted = await sql.all<{ id: number; title: string; format: string; hook: string; platform: string; permalink: string | null; posted_at: string | null }>(
-    `SELECT c.id, c.title, c.format, c.hook, p.platform, p.permalink, p.posted_at FROM posts p JOIN content c ON c.id = p.content_id
-     WHERE p.account_id = ? AND p.status = 'posted' ORDER BY p.posted_at DESC LIMIT 12`,
-    a.id,
-  );
+  // Posted pieces with their Instagram insights (latest snapshot), and the Analyst's latest read of them.
+  const posted = (await postsWithMetrics(a.id, new Date(Date.now() - 21 * 86400_000).toISOString())).slice(0, 16);
+  const analysis = await latestReport(a.id, "analysis");
   const failed = await sql.all<{ id: number; agent: string; kind: string; error: string }>(
     "SELECT id, agent, kind, error FROM jobs WHERE account_id = ? AND status = 'failed' AND created_at > datetime('now','-30 days') AND kind != 'render' ORDER BY id DESC LIMIT 12",
     a.id,
@@ -132,8 +131,25 @@ export async function developerPrompt(job: Job, a: Account): Promise<string> {
     sec("Owner notes on pieces (edits and redo requests):", notes.map((c) => `- #${c.id} [${c.format}, ${c.status}] ${c.title} — "${cut(c.feedback, 300)}"`)),
     sec("Pieces whose video/slide plan had to be redone:", redos.map((r) => `- #${r.ref_id} ${r.title}: ${r.kind} planned ${r.n} times`)),
     sec(
-      "Posted (views, saves and shares are not collected yet, so judge by what got approved and posted):",
-      posted.map((p) => `- #${p.id} [${p.format}, ${p.platform}] ${p.title} — hook "${cut(p.hook, 120)}" — ${String(p.posted_at ?? "").slice(0, 10)}${p.permalink ? ` ${p.permalink}` : ""}`),
+      "Posted, with Instagram insights (latest snapshot; age = hours after posting; TikTok is posted by hand and not measured yet):",
+      posted.map(
+        (p) =>
+          `- #${p.content_id} [${p.format}, ${p.platform}] ${p.title} — hook "${cut(p.hook, 120)}" — ${p.posted_at.slice(0, 10)}
+  ` +
+          (p.latest ? `${p.latest.age_hours}h: ${metricText(p.latest)}` : "no insights yet"),
+      ),
+    ),
+    sec(
+      "The Analyst's latest weekly report (its recommendations already go to the Strategist every run — propose upgrades that make them stick, don't duplicate them):",
+      analysis
+        ? [
+            `- ${analysis.period_start} – ${analysis.period_end}: ${String(analysis.data.headline ?? "")}`,
+            ...((analysis.data.recommendations as { priority: string; area: string; recommendation: string; evidence: string }[] | undefined) ?? []).map(
+              (r) => `  [${r.priority} · ${r.area}] ${r.recommendation} (${r.evidence})`,
+            ),
+          ]
+        : [],
+      "(no report yet)",
     ),
     sec("Failed agent runs in the last 30 days:", failed.map((j) => `- job #${j.id} ${j.agent}/${j.kind}: ${cut(j.error, 240)}`)),
     sec("Failed renders (often a plan the renderer could not draw):", failedRenders.map((j) => `- job #${j.id}: ${cut(j.error, 200)}`)),

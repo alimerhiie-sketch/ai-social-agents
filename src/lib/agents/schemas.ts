@@ -175,3 +175,78 @@ export const developerSchema = obj({
     "3–8 proposals, best expected impact first, at most 3 per agent",
   ),
 });
+
+/** Analyst: the weekly results report. Numbers come from Instagram insights we collected; the agent explains them. */
+const piece = obj({
+  content_id: int("The piece's content id (#) from the data"),
+  title: str(),
+  numbers: str("Its key numbers, e.g. '68 views · 62 reach · 74.6% skipped in 3 s · 2.8 s avg watch'"),
+  why: str("Your best explanation, tied to the hook, format, topic, art style or time — say so when it's a guess"),
+});
+
+export const analystSchema = obj({
+  headline: str("One sentence: the week in numbers"),
+  data_quality: str("1–2 sentences: how much data there is and what it cannot tell yet (few posts, young posts, TikTok not tracked)"),
+  worked: strs("What worked, each point with its numbers. [] if nothing stood out"),
+  didnt_work: strs("What didn't, each point with its numbers"),
+  best: list(piece, "Up to 3 best pieces, best first"),
+  worst: list(piece, "Up to 3 worst pieces, worst first"),
+  formats: list(
+    obj({
+      format: en(["reel", "carousel", "post", "story"]),
+      pieces: int(),
+      avg_views: num(),
+      avg_reach: num(),
+      avg_interactions: num(),
+      verdict: str("One sentence"),
+    }),
+    "One row per format posted in the window",
+  ),
+  hooks: str("Which hook styles held attention (skip rate and watch time for reels, reach for posts) and which didn't, with examples"),
+  topics: str("Which pillars, topics or trends pulled views, and which didn't"),
+  art_styles: str("Differences between art styles, or 'not enough data yet'"),
+  posting_times: str("Best and worst posting slots so far, with numbers, or 'not enough data yet'"),
+  follower_growth: obj({
+    start: int("Followers at the start of the window"),
+    end: int("Followers now"),
+    change: int(),
+    note: str("What drove it, if anything can tell"),
+  }),
+  recommendations: list(
+    obj({
+      area: en(["hooks", "formats", "topics", "art-style", "captions", "posting-times", "length", "other"]),
+      recommendation: str("One concrete instruction the Strategist can follow when scripting, one sentence"),
+      evidence: str("The numbers behind it"),
+      priority: en(["high", "medium", "low"]),
+    }),
+    "3–6 recommendations for the Strategist, highest priority first",
+  ),
+});
+
+/** Manager: the weekly brief for the owner, plus next week's mix within what the owner enabled. */
+export const managerSchema = obj({
+  headline: str("One sentence for the owner: the state of the account this week"),
+  account_state: str("3–5 sentences with numbers: followers, reach, what is working, what is not"),
+  next_week: strs("2–5 things the team will do differently next week, each tied to the Analyst's evidence"),
+  mix: obj({
+    feed_formats: list(
+      obj({ format: en(["carousel", "post"]), share_percent: int() }),
+      "Split of the daily feed posts between carousels and single posts. Only formats in enabled_formats; shares sum to 100",
+    ),
+    art_styles: list(
+      obj({ art_style: str("An id from enabled_art_styles"), share_percent: int() }),
+      "Split of next week's pieces across art styles. Only ids from enabled_art_styles; shares sum to 100",
+    ),
+    focus: str("One sentence of creative focus for the Strategist next week (hook style, pillar or topic to push)"),
+    reason: str("Why this mix, citing the numbers. If the data is too thin to move, keep the current mix and say so"),
+  }),
+  decisions: list(
+    obj({
+      question: str("A decision only the owner can make, as a question"),
+      why: str("The evidence or problem behind it"),
+      recommendation: str("What you'd do"),
+    }),
+    "Posting volume or times, enabling a new format or art style, connecting TikTok, approvals piling up… [] if none",
+  ),
+  risks: strs("Anything going wrong: failed posts, an empty schedule, pieces waiting for approval. [] if none"),
+});

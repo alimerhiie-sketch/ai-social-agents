@@ -9,11 +9,14 @@ import type { Connection, Post } from "./types";
 import { signedMediaUrl } from "./auth";
 import { enqueueCycle, enqueueProduce, markContentPostedIfDone, pinEnv, wakeRunner, type HqEnv } from "./queue";
 import { enqueueWeeklyDevelop } from "./agents/upgrades";
+import { collectMetrics } from "./analytics/collect";
+import { enqueueWeeklyReview } from "./analytics/review";
 
 // Runs every 5 minutes on Cloudflare (worker.ts → scheduled). This is what replaces the laptop:
 //  1. post whatever Instagram posts are due (two-phase: create container → publish when processed)
-//  2. once a night: find trends, script the coming days, produce approved pieces, schedule finished ones
-//  3. wake the GitHub Actions runner if there's work it can do
+//  2. read Instagram insights of posted pieces at 1h / 24h / 72h / 7d, and the account once a day
+//  3. once a night: weekly review (Sundays), find trends, script the coming days, produce, schedule
+//  4. wake the GitHub Actions runner if there's work it can do
 
 const NIGHTLY_HOUR = 3; // 03:00 in the owner's time zone
 /** A post this late (cron outage, or it sat on the phone page) is not sent on its own: press Retry now to send it anyway. */
@@ -27,6 +30,11 @@ export async function runCron(env: HqEnv & { DB: unknown }) {
     notes.push(...(await publishDue()));
   } catch (e) {
     notes.push(`publish error: ${(e as Error).message}`);
+  }
+  try {
+    notes.push(...(await collectMetrics()));
+  } catch (e) {
+    notes.push(`insights error: ${(e as Error).message}`);
   }
   try {
     notes.push(...(await nightly()));
@@ -178,6 +186,9 @@ async function nightly(): Promise<string[]> {
   await q.setSetting("nightly:last", today);
   const out: string[] = [];
   for (const a of await q.accounts()) {
+    // Sundays: the Analyst reviews the week, then the Manager writes the brief and sets next week's mix.
+    // Queued first so they run before the scripting jobs below and those see the new mix.
+    if ((await enqueueWeeklyReview(a.id)).length) out.push(`${a.name}: queued the weekly analysis + Manager brief`);
     // Strategist + Trend Scout keep a week of scripts ahead (skips days that are already full).
     const ids = await enqueueCycle(a.id);
     out.push(`${a.name}: queued ${ids.length} planning jobs`);

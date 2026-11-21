@@ -11,14 +11,14 @@ export type AgentDef = {
   tools: string[];
 };
 
-// The whole team. Only Phase 1 agents run today; the rest show on the dashboard as the roadmap.
+// The whole team. "planned" agents show on the dashboard as the roadmap.
 export const AGENTS: AgentDef[] = [
   {
     id: "manager",
     name: "Manager",
-    role: "Runs each account's cycle, hands out work, holds the approval gate. For now it runs a fixed cycle: strategy (if missing) → trends → one scripting run per day for the next 7 days.",
+    role: "Runs each account's cycle and steers it. Every Sunday night, after the Analyst's report, it writes you a brief (where the account stands, what the team changes next week, what needs your decision) and sets next week's mix of feed formats and art styles within what you enabled. It never changes posting volume.",
     phase: 4,
-    status: "basic",
+    status: "active",
     defaultModel: "sonnet",
     tools: [],
   },
@@ -79,9 +79,9 @@ export const AGENTS: AgentDef[] = [
   {
     id: "analyst",
     name: "Analyst",
-    role: "Pulls views, saves, shares and follower growth after posting, and feeds what worked back to the Strategist.",
+    role: "Reads each Instagram post's views, reach, saves, shares and watch time at 1h, 24h, 72h and 7 days, and the follower count daily. Every Sunday it reports what worked, the best and worst pieces and why, and gives the Strategist concrete recommendations for the next scripts.",
     phase: 4,
-    status: "planned",
+    status: "active",
     defaultModel: "sonnet",
     tools: [],
   },
@@ -99,4 +99,6 @@ export const JOB_KINDS: Record<JobKind, { agent: string; label: string; verb: st
   render: { agent: "renderer", label: "Render", verb: "Painting and rendering" },
   publish: { agent: "publisher", label: "Post to Instagram", verb: "Posting to Instagram" },
   develop: { agent: "agent-developer", label: "Upgrade the agents", verb: "Researching agent upgrades" },
+  analyze: { agent: "analyst", label: "Weekly analysis", verb: "Analysing the week's results" },
+  brief: { agent: "manager", label: "Weekly brief", verb: "Writing the weekly brief" },
 };

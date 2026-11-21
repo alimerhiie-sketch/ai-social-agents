@@ -101,7 +101,7 @@ export type ContentItem = {
 };
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
-export type JobKind = "strategy" | "trends" | "plan" | "from-trend" | "video" | "design" | "render" | "publish" | "develop";
+export type JobKind = "strategy" | "trends" | "plan" | "from-trend" | "video" | "design" | "render" | "publish" | "develop" | "analyze" | "brief";
 
 export type Post = {
   id: number;

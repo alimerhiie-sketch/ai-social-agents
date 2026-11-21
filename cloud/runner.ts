@@ -1,6 +1,6 @@
 // Agent HQ cloud runner — runs inside GitHub Actions (see .github/workflows/runner.yml).
 // Claims queued jobs from the Worker's database one at a time and does them:
-//   strategy / trends / plan / from-trend / video / design → Claude Code headless (your subscription token)
+//   strategy / trends / plan / from-trend / video / design / develop / analyze / brief → Claude Code headless (your subscription token)
 //   render → paint (Cloudflare Workers AI) + voice (Kokoro) + Remotion, then upload the finished files
 // Exits when the queue has been empty for a minute, or before Actions' 6-hour limit.
 //
@@ -15,7 +15,7 @@ import { log, modelFor } from "../src/lib/queue";
 import { applyResult } from "../src/lib/agents/apply";
 import { buildPrompt } from "../src/lib/agents/prompts";
 import { agentById, JOB_KINDS } from "../src/lib/agents/registry";
-import { developerSchema, planSchema, scenePlanSchema, strategySchema, trendsSchema } from "../src/lib/agents/schemas";
+import { analystSchema, developerSchema, managerSchema, planSchema, scenePlanSchema, strategySchema, trendsSchema } from "../src/lib/agents/schemas";
 import type { Job, JobKind } from "../src/lib/types";
 
 const ROOT = process.cwd(); // the workflow runs from the repo root
@@ -36,6 +36,8 @@ const SCHEMAS: Partial<Record<JobKind, object>> = {
   video: scenePlanSchema,
   design: scenePlanSchema,
   develop: developerSchema,
+  analyze: analystSchema,
+  brief: managerSchema,
 };
 
 const say = (s: string) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${s}`);
