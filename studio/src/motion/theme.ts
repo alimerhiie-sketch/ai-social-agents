@@ -2,6 +2,8 @@ import { interpolate } from "remotion";
 import { easeIn, easeOut } from "../brand";
 import type { ArtStyle } from "../artStyles";
 import type { Palette } from "../types";
+import { body, display } from "../brand";
+import type { Look } from "./looks";
 
 export type Theme = {
   /** darkest ground */
@@ -14,6 +16,14 @@ export type Theme = {
   /** warm accent from the art style: emphasis only, used sparingly */
   warm: string;
   ink: string;
+  font: string;
+  bodyFont: string;
+  weight: number;
+  /** dark ink on a light world */
+  light: boolean;
+  panel: string;
+  /** shadow colour for depth on this world */
+  shadow: string;
 };
 
 const hex = (h: string) => {
@@ -30,7 +40,23 @@ export function mix(a: string, b: string, t: number) {
   return `#${c.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
 }
 
-export function themeFor(palette: Palette, style: ArtStyle | null): Theme {
+export function themeFor(palette: Palette, style: ArtStyle | null, look?: Look): Theme {
+  if (look && look.id !== "brand") {
+    return {
+      base: look.paper,
+      field: look.accent2,
+      deep: look.bg,
+      accent: look.light ? look.accent2 : look.accent2,
+      warm: look.accent,
+      ink: look.ink,
+      font: look.font,
+      bodyFont: look.bodyFont,
+      weight: look.weight,
+      light: look.light,
+      panel: look.panel,
+      shadow: look.light ? "rgba(0,0,0,0.12)" : "rgba(0,0,0,0.45)",
+    };
+  }
   return {
     base: mix(palette.deep, "#000000", 0.55),
     field: palette.field,
@@ -38,6 +64,12 @@ export function themeFor(palette: Palette, style: ArtStyle | null): Theme {
     accent: palette.soft,
     warm: style?.glow || "#FFD58A",
     ink: "#FFFFFF",
+    font: display,
+    bodyFont: body,
+    weight: 800,
+    light: false,
+    panel: "rgba(255,255,255,0.08)",
+    shadow: "rgba(0,0,0,0.4)",
   };
 }
 

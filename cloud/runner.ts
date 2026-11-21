@@ -291,6 +291,7 @@ async function runRender(job: Job) {
     characterRef: charRef,
     seed: c.id * 7919,
     scenes: c.production.scenes,
+    look: (c.production as { look?: string }).look || "brand",
   };
   const specPath = path.join(work, "spec.json");
   fs.writeFileSync(specPath, JSON.stringify(spec, null, 2));

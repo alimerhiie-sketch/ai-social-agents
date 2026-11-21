@@ -91,7 +91,7 @@ const contentItem = obj({
     obj({ heading: str(), body: str(), visual: str() }),
     "Carousel slides or the single post/story design. Empty array for videos.",
   ),
-  art_style: str("One of the account's allowed art style ids, the look for this piece"),
+  art_style: str("Reels: the animation look, one id from reel_looks. Feed posts: one of the account's allowed_art_styles"),
   caption: str("Full caption without hashtags"),
   hashtags: strs("3–5 hashtags without the # sign"),
   cta: str(),
@@ -107,7 +107,7 @@ export const planSchema = obj({
 
 const beat = obj({
   say: str("The exact words of this scene's voiceover spoken during this beat, in order (3–8 words)"),
-  visual: en(["title", "icon", "icons", "split", "counter", "bars", "versus", "flow", "meter", "character", "chat", "checklist", "painting"]),
+  visual: en(["scene", "object", "title", "icon", "icons", "split", "counter", "bars", "versus", "flow", "meter", "character", "chat", "checklist", "painting"]),
   text: str("On-screen words for the visual: title text, icon label, split phrase with | between chunks, meter limit label, speech bubble. '' for none"),
   icon: str("Lucide icon name in kebab-case for icon / character prop, e.g. 'scissors', 'coins', 'message-circle'. '' for none"),
   items: list(obj({ icon: str("Lucide icon name or ''"), label: str(), value: str() }), "Rows for icons / bars / versus / flow / chat / checklist; [] otherwise"),
@@ -115,6 +115,18 @@ const beat = obj({
   level: num("meter fill or counter ring, 0–1. 0 otherwise"),
   pose: en(["idle", "wave", "point", "think", "shrug", "cheer", "hold", "surprised"]),
   transition: en(["cut", "whip", "zoom", "wipe", "iris"]),
+  set: en(["none", "desk", "park", "stage", "city"], "scene: where it happens"),
+  action: en(["stand", "wave", "point", "think", "shrug", "shock", "happy", "tired", "type", "phone", "sit", "walk", "present"], "scene: what the person does"),
+  who: en(["person", "mascot"], "scene: the relatable person, or the account's mascot"),
+  props: list(
+    obj({
+      kind: en(["calendar", "clock", "cups", "mug", "plant", "monitor", "phone", "sign", "chart", "money", "lightbulb", "papers", "books", "robot", "laptop"]),
+      label: str("calendar: day number; clock: time like '22:00'; cups: how many; sign: its words; chart: 'up' or 'down'; money: amount; else ''"),
+    }),
+    "scene: 0–3 animated props",
+  ),
+  shot: en(["wide", "close"]),
+  object: en(["none", "engine", "chip", "server", "brain", "gem", "globe", "phone", "coins", "cubes", "lock"], "object: the 3D hero object"),
 });
 
 const scene = obj({
@@ -139,6 +151,7 @@ const scene = obj({
 
 export const scenePlanSchema = obj({
   notes: str("One sentence on the visual idea running through the piece"),
+  look: en(["paper-blueprint", "paper", "blueprint", "doodle", "lofi", "cosmic", "brand"], "Reels: the animation style of the whole video (the Strategist's LOOK when given). Slides: 'brand'"),
   scenes: list(scene),
 });
 

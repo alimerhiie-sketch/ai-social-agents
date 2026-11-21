@@ -6,6 +6,8 @@ export type Camera = "push-in" | "pull-out" | "pan-left" | "pan-right" | "rise" 
 
 /** What a motion beat shows. Every visual is built in code (Remotion), except `painting`. */
 export type BeatVisual =
+  | "scene"
+  | "object"
   | "title"
   | "icon"
   | "icons"
@@ -47,6 +49,18 @@ export type Beat = {
   pose: Pose;
   /** how this beat enters */
   transition: BeatTransition;
+  /** scene: where it happens */
+  set?: "desk" | "park" | "stage" | "city";
+  /** scene: what the person does (stand, wave, point, think, shrug, shock, happy, tired, type, phone, sit, walk, present) */
+  action?: string;
+  /** scene: who is in it */
+  who?: "person" | "mascot";
+  /** scene: animated props, e.g. {kind:"calendar", label:"98"} */
+  props?: { kind: string; label: string }[];
+  /** scene: wide or close on the face */
+  shot?: "wide" | "close";
+  /** object: the 3D hero object (blueprint / cosmic looks) */
+  object?: string;
 };
 
 export type Scene = {
@@ -107,6 +121,8 @@ export type ReelProps = {
   palette: Palette;
   handle: string;
   showCaptions: boolean;
+  /** the reel's art direction (see motion/looks.ts) */
+  look?: string;
   /** the recurring character, drawn in code: body / eye / scarf colours */
   mascot?: { body: string; eye: string; scarf: string };
 };

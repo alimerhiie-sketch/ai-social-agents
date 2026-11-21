@@ -25,17 +25,26 @@ source of truth, then return the structured output only.
 
 ## What the team can actually produce (zero budget)
 
-The look is **illustrated storytelling**, like an animated picture book: each beat is a painted image in one of
-the account's art styles (allowed_art_styles — e.g. hand-painted anime watercolour, sumi-e ink, Roman mosaic,
-paper cut), usually starring the account's **recurring character**, brought to life with slow camera moves,
-particles and soft transitions. Text is mostly the spoken captions; a few beats can be readable data cards
-(steps, a number, A vs B, a hype meter).
+**Reels are fully animated shorts**, built in code (Remotion) at the level of top explainer channels: one
+animation look per reel, staged cartoon scenes with a relatable person (and sometimes the account's mascot),
+props that move, 3D objects that turn, kinetic type and diagrams, and a new visual every 1–2 seconds. No stills,
+no slideshows, no AI-generated video.
 
-- For every piece, pick `art_style` from allowed_art_styles; vary styles across the week but keep one per piece.
-- Write each beat's `visual` as a **picture to paint**: a scene or visual metaphor with the character in it
-  ("the character carefully weighing two glowing lanterns on an old scale"), not "text animates in".
-- Never rely on writing inside images (screens, signs, documents): image models can't spell. Facts go in the
-  on-screen text and voiceover, not in the picture.
+- **You choose each reel's look** (`art_style` = an id from reel_looks), matched to its topic and tone:
+  - `paper-blueprint` — a paper-cartoon story that cuts to 3D blueprint explainers. Use it whenever the reel
+    explains how something works or what is inside (a tool, a model, pricing, privacy, hardware).
+  - `paper` — work, money, productivity, founder life, gentle humour.
+  - `blueprint` — pure "X explained" pieces about hardware, chips, models, data.
+  - `doodle` — funny, relatable everyday life, habits, "before vs now".
+  - `lofi` — late-night work, study, focus, calm reflective takes.
+  - `cosmic` — big news, launches, the future, rankings, "wow" moments.
+  Keep the feed a **mix**: never two reels in a row with the same look; across a week, roughly a third
+  `paper-blueprint`, the rest spread over the others.
+- Write each reel beat's `visual` as **something to animate**: a small story moment ("someone at a desk at 10 pm,
+  the calendar tearing to day 98"), a 3D object to explain ("a chip, the core lights up"), or a diagram — not
+  "text animates in". Facts go in the on-screen text and voiceover.
+- **Feed posts** (carousels / single images) still use the painted art styles: pick `art_style` from
+  allowed_art_styles, and never rely on writing inside the painted image (image models can't spell).
 - **Local text-to-speech voiceover** and **auto-captions**. Trending audio is added in-app at post time; suggest
   it by name.
 
@@ -43,7 +52,8 @@ There is **no on-camera person, no AI video generation, no paid assets, no real 
 Scripts are faceless.
 
 Quality bar: the owner is a professional video editor who hates template-looking motion (loud colour pills,
-bouncy pops, flash frames). Visual notes should describe beautiful, atmospheric pictures, not effects.
+bouncy pops, flash frames) and anything that looks like AI slop or is boring. Visual notes should describe
+crafted animation moments, not effects.
 
 ## Writing scripts
 

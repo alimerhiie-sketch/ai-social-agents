@@ -1,14 +1,17 @@
 import React from "react";
 import { AbsoluteFill, Img, random, useCurrentFrame } from "remotion";
-import { body, display, withAlpha } from "../brand";
+import { withAlpha } from "../brand";
 import type { Beat, BeatItem, Scene } from "../types";
 import { Icon } from "./Icon";
 import { Mascot, type MascotColors } from "./Mascot";
 import { mix, pr, type Theme } from "./theme";
+import { LOOKS, objectLook, type Look } from "./looks";
+import { SceneBeat } from "./cartoon/Scene";
+import { ObjectBeat } from "./three/Object3D";
 
 // The motion vocabulary. Every visual keeps moving while it holds; entrances use expo-out, no overshoot.
 
-export type BeatProps = { beat: Beat; scene: Scene; d: number; theme: Theme; mascot: MascotColors; seed: number };
+export type BeatProps = { beat: Beat; scene: Scene; d: number; theme: Theme; mascot: MascotColors; seed: number; look?: Look };
 
 /** The stage: the part of the 9:16 frame above the captions and clear of the app UI. */
 export const STAGE = { top: 270, bottom: 610, side: 90 };
@@ -53,7 +56,7 @@ const plain = (t: string) => t.replace(/\*/g, "");
 function Words({ text, start = 0, size, theme, weight = 800, stagger = 2.5, color, align = "center" }: { text: string; start?: number; size: number; theme: Theme; weight?: number; stagger?: number; color?: string; align?: "center" | "left" }) {
   const f = useCurrentFrame();
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: align === "center" ? "center" : "flex-start", columnGap: "0.24em", fontFamily: display, fontWeight: weight, fontSize: size, lineHeight: 1.04, letterSpacing: "-0.02em", textAlign: align, color: color ?? theme.ink }}>
+    <div style={{ display: "flex", flexWrap: "wrap", justifyContent: align === "center" ? "center" : "flex-start", columnGap: "0.24em", fontFamily: theme.font, fontWeight: weight === 800 ? theme.weight : weight, fontSize: size, lineHeight: 1.04, letterSpacing: "-0.02em", textAlign: align, color: color ?? theme.ink }}>
       {tokenize(text).map((t, i) => {
         const p = pr(f, start + i * stagger, 14);
         return (
@@ -71,7 +74,7 @@ function Label({ text, start, theme, size = 30 }: { text: string; start: number;
   const p = pr(f, start, 14);
   if (!text) return null;
   return (
-    <div style={{ fontFamily: body, fontWeight: 600, fontSize: size, letterSpacing: `${0.12 + p * 0.1}em`, textTransform: "uppercase", color: theme.accent, opacity: p }}>
+    <div style={{ fontFamily: theme.bodyFont, fontWeight: 600, fontSize: size, letterSpacing: `${0.12 + p * 0.1}em`, textTransform: "uppercase", color: theme.accent, opacity: p }}>
       {plain(text)}
     </div>
   );
@@ -98,7 +101,7 @@ function Title({ beat, d, theme }: BeatProps) {
         <div
           style={{
             whiteSpace: "nowrap",
-            fontFamily: display,
+            fontFamily: theme.font,
             fontWeight: 800,
             fontSize: 400,
             letterSpacing: "-0.04em",
@@ -172,14 +175,14 @@ function Icons({ beat, theme, d }: BeatProps) {
           const p = pr(f, s, 16);
           return (
             <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 20, opacity: p, transform: `translateY(${(1 - p) * 60 + Math.sin(f / 14 + i) * 6}px)` }}>
-              <div style={{ width: size, height: size, borderRadius: "50%", display: "grid", placeItems: "center", background: `radial-gradient(circle at 35% 30%, ${withAlpha(theme.ink, 0.16)}, ${withAlpha(theme.ink, 0.04)} 70%)`, border: `2px solid ${withAlpha(theme.accent, 0.45)}`, boxShadow: `0 24px 60px ${withAlpha("#000000", 0.35)}` }}>
+              <div style={{ width: size, height: size, borderRadius: "50%", display: "grid", placeItems: "center", background: `radial-gradient(circle at 35% 30%, ${withAlpha(theme.ink, 0.16)}, ${withAlpha(theme.ink, 0.04)} 70%)`, border: `2px solid ${withAlpha(theme.accent, 0.45)}`, boxShadow: `0 24px 60px ${theme.shadow}` }}>
                 {it.icon ? (
                   <Icon name={it.icon} size={size * 0.5} color={i === 0 ? theme.warm : theme.ink} draw={pr(f, s + 3, 18)} />
                 ) : (
-                  <div style={{ fontFamily: display, fontWeight: 800, fontSize: size * (it.label.length > 5 ? 0.2 : 0.28), color: i % 2 ? theme.warm : theme.ink }}>{it.label}</div>
+                  <div style={{ fontFamily: theme.font, fontWeight: 800, fontSize: size * (it.label.length > 5 ? 0.2 : 0.28), color: i % 2 ? theme.warm : theme.ink }}>{it.label}</div>
                 )}
               </div>
-              {it.icon && <div style={{ fontFamily: display, fontWeight: 800, fontSize: n > 4 ? 40 : 48, color: theme.ink, textAlign: "center", lineHeight: 1.1 }}>{it.label}</div>}
+              {it.icon && <div style={{ fontFamily: theme.font, fontWeight: 800, fontSize: n > 4 ? 40 : 48, color: theme.ink, textAlign: "center", lineHeight: 1.1 }}>{it.label}</div>}
             </div>
           );
         })}
@@ -211,7 +214,7 @@ function Split({ beat, theme, seed }: BeatProps) {
               key={i}
               style={{
                 position: "relative",
-                fontFamily: display,
+                fontFamily: theme.font,
                 fontWeight: 800,
                 fontSize: size,
                 lineHeight: 1,
@@ -219,8 +222,9 @@ function Split({ beat, theme, seed }: BeatProps) {
                 padding: `${0.16 * sep}em ${0.3 * sep}em`,
                 borderRadius: 22 * sep,
                 background: withAlpha(bg, 0.96 * sep),
-                color: mix(theme.ink, theme.base, sep),
-                boxShadow: `0 ${30 * sep}px ${60 * sep}px ${withAlpha("#000000", 0.35 * sep)}`,
+                color: theme.light ? theme.ink : mix(theme.ink, theme.base, sep),
+                border: theme.light ? `${4 * sep}px solid ${withAlpha(theme.ink, sep)}` : undefined,
+                boxShadow: `0 ${30 * sep}px ${60 * sep}px ${theme.shadow}`,
                 transform: `translateY(${(r("y") * 50 + Math.sin(f / 11 + i * 1.7) * 8) * sep}px) rotate(${r("r") * 9 * sep}deg)`,
               }}
             >
@@ -281,7 +285,7 @@ function Counter({ beat, theme, d }: BeatProps) {
             return <line key={i} x1={r + Math.cos(a) * r * 0.93} y1={r + Math.sin(a) * r * 0.93} x2={r + Math.cos(a) * r * (i % 6 ? 0.97 : 1.0)} y2={r + Math.sin(a) * r * (i % 6 ? 0.97 : 1.0)} stroke={lit ? theme.accent : withAlpha(theme.ink, 0.18)} strokeWidth={i % 6 ? 2 : 4} strokeLinecap="round" />;
           })}
         </svg>
-        <div style={{ fontFamily: display, fontWeight: 800, fontSize: fs, letterSpacing: "-0.04em", color: theme.ink, fontVariantNumeric: "tabular-nums", opacity: pr(f, 0, 10), transform: `scale(${0.9 + pr(f, 0, 16) * 0.1})` }}>{shown}</div>
+        <div style={{ fontFamily: theme.font, fontWeight: 800, fontSize: fs, letterSpacing: "-0.04em", color: theme.ink, fontVariantNumeric: "tabular-nums", opacity: pr(f, 0, 10), transform: `scale(${0.9 + pr(f, 0, 16) * 0.1})` }}>{shown}</div>
       </div>
       {beat.text && <Words text={beat.text} start={12} size={plain(beat.text).length > 22 ? 56 : 68} theme={theme} />}
     </Stage>
@@ -306,7 +310,7 @@ function Bars({ beat, theme, d }: BeatProps) {
           const shown = num ? `${num.pre}${Math.round(num.v * p).toLocaleString("en-US")}${num.post}` : it.value;
           return (
             <div key={i} style={{ display: "flex", flexDirection: "column", gap: 14, opacity: pr(f, s, 10) }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontFamily: display, fontWeight: 800, fontSize: 56, color: theme.ink }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", fontFamily: theme.font, fontWeight: 800, fontSize: 56, color: theme.ink }}>
                 <span style={{ display: "flex", alignItems: "center", gap: 16 }}>
                   {it.icon && <Icon name={it.icon} size={58} color={theme.accent} draw={pr(f, s, 16)} strokeWidth={2} />}
                   {it.label}
@@ -346,14 +350,14 @@ function Versus({ beat, theme }: BeatProps) {
           gap: 26,
           background: i === 1 ? `linear-gradient(160deg, ${withAlpha(theme.warm, 0.22)}, ${withAlpha(theme.warm, 0.05)})` : `linear-gradient(160deg, ${withAlpha(theme.ink, 0.13)}, ${withAlpha(theme.ink, 0.03)})`,
           border: `2px solid ${withAlpha(i === 1 ? theme.warm : theme.accent, 0.45)}`,
-          boxShadow: `0 40px 90px ${withAlpha("#000000", 0.4)}`,
+          boxShadow: `0 40px 90px ${theme.shadow}`,
           opacity: p,
           transform: `perspective(1200px) translateX(${(1 - p) * -260 * dir}px) rotateY(${(1 - p) * 60 * dir + Math.sin(f / 20 + i * 2) * 3}deg) translateY(${Math.sin(f / 15 + i * 2) * 8}px)`,
         }}
       >
         <Icon name={it.icon || (i === 0 ? "circle-x" : "circle-check")} size={170} color={i === 1 ? theme.warm : theme.ink} draw={pr(f, 8 + i * 5, 18)} />
-        <div style={{ fontFamily: body, fontWeight: 600, fontSize: 34, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.accent, textAlign: "center" }}>{it.label}</div>
-        <div style={{ fontFamily: display, fontWeight: 800, fontSize: it.value.length > 14 ? 52 : 68, lineHeight: 1.05, color: theme.ink, textAlign: "center" }}>{it.value}</div>
+        <div style={{ fontFamily: theme.bodyFont, fontWeight: 600, fontSize: 34, letterSpacing: "0.16em", textTransform: "uppercase", color: theme.accent, textAlign: "center" }}>{it.label}</div>
+        <div style={{ fontFamily: theme.font, fontWeight: 800, fontSize: it.value.length > 14 ? 52 : 68, lineHeight: 1.05, color: theme.ink, textAlign: "center" }}>{it.value}</div>
       </div>
     );
   };
@@ -364,7 +368,7 @@ function Versus({ beat, theme }: BeatProps) {
         {card(sides[0], 0)}
         <div style={{ width: 80, alignSelf: "stretch", display: "grid", placeItems: "center", position: "relative" }}>
           <div style={{ position: "absolute", top: 0, bottom: 0, width: 3, background: withAlpha(theme.ink, 0.35), transform: `scaleY(${line})` }} />
-          <div style={{ position: "relative", fontFamily: display, fontWeight: 800, fontSize: 34, color: theme.base, background: theme.ink, borderRadius: "50%", width: 74, height: 74, display: "grid", placeItems: "center", opacity: line, transform: `scale(${0.6 + line * 0.4})` }}>VS</div>
+          <div style={{ position: "relative", fontFamily: theme.font, fontWeight: 800, fontSize: 34, color: theme.base, background: theme.ink, borderRadius: "50%", width: 74, height: 74, display: "grid", placeItems: "center", opacity: line, transform: `scale(${0.6 + line * 0.4})` }}>VS</div>
         </div>
         {card(sides[1], 1)}
       </div>
@@ -395,12 +399,12 @@ function Flow({ beat, theme, d }: BeatProps) {
                   {conn >= 1 && packet >= 0 && <div style={{ position: "absolute", left: -8, top: packet * gap - 10, width: 20, height: 20, borderRadius: "50%", background: theme.warm, boxShadow: `0 0 22px 6px ${withAlpha(theme.warm, 0.6)}` }} />}
                 </div>
               )}
-              <div style={{ width: node, height: node, flexShrink: 0, borderRadius: "50%", display: "grid", placeItems: "center", background: i === n - 1 ? theme.warm : withAlpha(theme.ink, 0.1), border: `2px solid ${withAlpha(theme.accent, 0.5)}`, boxShadow: `0 20px 50px ${withAlpha("#000000", 0.35)}` }}>
+              <div style={{ width: node, height: node, flexShrink: 0, borderRadius: "50%", display: "grid", placeItems: "center", background: i === n - 1 ? theme.warm : withAlpha(theme.ink, 0.1), border: `2px solid ${withAlpha(theme.accent, 0.5)}`, boxShadow: `0 20px 50px ${theme.shadow}` }}>
                 <Icon name={it.icon || it.label} size={100} color={i === n - 1 ? theme.base : theme.ink} draw={pr(f, s + 2, 16)} strokeWidth={1.8} />
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 560 }}>
-                <div style={{ fontFamily: display, fontWeight: 800, fontSize: 66, lineHeight: 1.05, color: theme.ink }}>{it.label}</div>
-                {it.value && <div style={{ fontFamily: body, fontWeight: 500, fontSize: 40, color: withAlpha(theme.ink, 0.72) }}>{it.value}</div>}
+                <div style={{ fontFamily: theme.font, fontWeight: 800, fontSize: 66, lineHeight: 1.05, color: theme.ink }}>{it.label}</div>
+                {it.value && <div style={{ fontFamily: theme.bodyFont, fontWeight: 500, fontSize: 40, color: withAlpha(theme.ink, 0.72) }}>{it.value}</div>}
               </div>
             </div>
           );
@@ -457,7 +461,7 @@ function Meter({ beat, theme, seed, d }: BeatProps) {
         {/* the limit line */}
         <div style={{ position: "absolute", left: -50, width: W + 100, top: lineY - 2, height: 0, borderTop: `4px dashed ${reached > 0 ? mix(theme.accent, theme.warm, reached) : theme.accent}`, opacity: pr(f, 2, 12) }} />
         {beat.text && (
-          <div style={{ position: "absolute", left: -300, right: -300, top: lineY - 96, textAlign: "center", whiteSpace: "nowrap", fontFamily: display, fontWeight: 800, fontSize: 56, letterSpacing: "0.08em", textTransform: "uppercase", color: mix(theme.ink, theme.warm, reached), opacity: pr(f, 4, 14), transform: `translateY(${(1 - pr(f, 4, 14)) * 30}px)`, textShadow: `0 4px 24px ${withAlpha(theme.base, 0.8)}` }}>
+          <div style={{ position: "absolute", left: -300, right: -300, top: lineY - 96, textAlign: "center", whiteSpace: "nowrap", fontFamily: theme.font, fontWeight: 800, fontSize: 56, letterSpacing: "0.08em", textTransform: "uppercase", color: mix(theme.ink, theme.warm, reached), opacity: pr(f, 4, 14), transform: `translateY(${(1 - pr(f, 4, 14)) * 30}px)`, textShadow: `0 4px 24px ${withAlpha(theme.base, 0.8)}` }}>
             {plain(beat.text)}
           </div>
         )}
@@ -505,12 +509,12 @@ function Character({ beat, theme, mascot, seed }: BeatProps) {
               borderRadius: 40,
               background: theme.ink,
               color: theme.base,
-              fontFamily: display,
+              fontFamily: theme.font,
               fontWeight: 800,
               fontSize: plain(beat.text).length > 26 ? 52 : 64,
               lineHeight: 1.08,
               textAlign: "center",
-              boxShadow: `0 30px 70px ${withAlpha("#000000", 0.4)}`,
+              boxShadow: `0 30px 70px ${theme.shadow}`,
               opacity: bubble,
               transform: `translateY(${(1 - bubble) * 30 + Math.sin(f / 17) * 5}px) scale(${0.92 + bubble * 0.08})`,
               transformOrigin: "50% 100%",
@@ -561,11 +565,11 @@ function Chat({ beat, theme, d }: BeatProps) {
                   background: ai ? withAlpha(theme.field, 0.85) : theme.ink,
                   border: ai ? `2px solid ${withAlpha(theme.accent, 0.5)}` : "none",
                   color: ai ? theme.ink : theme.base,
-                  fontFamily: body,
+                  fontFamily: theme.bodyFont,
                   fontWeight: 600,
                   fontSize: 50,
                   lineHeight: 1.22,
-                  boxShadow: `0 24px 60px ${withAlpha("#000000", 0.35)}`,
+                  boxShadow: `0 24px 60px ${theme.shadow}`,
                 }}
               >
                 {ai && f < s + typing ? (
@@ -607,7 +611,7 @@ function Checklist({ beat, theme, d }: BeatProps) {
                 <circle cx={42} cy={42} r={38} fill={withAlpha(theme.warm, 0.95 * chk)} stroke={chk > 0 ? theme.warm : withAlpha(theme.accent, 0.7)} strokeWidth={4} />
                 <path d="M25 43 L37 55 L60 30" fill="none" stroke={theme.base} strokeWidth={8} strokeLinecap="round" strokeLinejoin="round" pathLength={1} strokeDasharray={1} strokeDashoffset={1 - chk} />
               </svg>
-              <div style={{ fontFamily: display, fontWeight: 800, fontSize: 62, lineHeight: 1.08, color: theme.ink }}>{it.label}</div>
+              <div style={{ fontFamily: theme.font, fontWeight: 800, fontSize: 62, lineHeight: 1.08, color: theme.ink }}>{it.label}</div>
             </div>
           );
         })}
@@ -631,7 +635,7 @@ function Painting({ beat, scene, theme, d }: BeatProps) {
           height: 1020,
           borderRadius: 44,
           overflow: "hidden",
-          boxShadow: `0 60px 140px ${withAlpha("#000000", 0.55)}, 0 0 0 2px ${withAlpha(theme.ink, 0.15)}`,
+          boxShadow: `0 60px 140px ${theme.shadow}, 0 0 0 2px ${withAlpha(theme.ink, 0.15)}`,
           opacity: p,
           transform: `perspective(1600px) translateY(${(1 - p) * 160}px) rotateX(${(1 - p) * 22 + Math.sin(f / 30) * 1.5}deg) rotateY(${Math.sin(f / 26) * 2.5}deg) scale(${0.9 + p * 0.1})`,
         }}
@@ -650,6 +654,10 @@ function Painting({ beat, scene, theme, d }: BeatProps) {
 
 export function BeatVisual(props: BeatProps) {
   switch (props.beat.visual) {
+    case "scene":
+      return <SceneBeat beat={props.beat} look={props.look ?? LOOKS.brand} d={props.d} seed={props.seed} mascot={props.mascot} />;
+    case "object":
+      return <ObjectBeat beat={props.beat} look={objectLook(props.look ?? LOOKS.blueprint)} d={props.d} seed={props.seed} backdrop={props.look?.id === "paper-blueprint"} />;
     case "icon":
       return <IconBeat {...props} />;
     case "icons":

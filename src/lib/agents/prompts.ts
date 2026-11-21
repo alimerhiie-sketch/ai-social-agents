@@ -1,7 +1,7 @@
 import { q, sql } from "../db";
 import type { Account, Job } from "../types";
 import { longDate, TZ, weekdayShort } from "../dates";
-import { ART_STYLES } from "../options";
+import { ART_STYLES, REEL_LOOKS, isReelLook } from "../options";
 import { developerPrompt } from "./developer";
 import { upgradesBlock } from "./upgrades";
 import { analysisPrompt, briefPrompt, dayMix, resultsBlock } from "../analytics/review";
@@ -26,6 +26,7 @@ function profile(a: Account) {
       allowed_formats: a.formats,
       allowed_video_styles: a.video_styles,
       allowed_art_styles: a.art_styles.length ? a.art_styles : ["ghibli"],
+      reel_looks: REEL_LOOKS.map((l) => `${l.id}: ${l.label} — ${l.when}`),
       recurring_character: a.character || "(none — invent scenes without a mascot)",
       daily_output: `${a.reels_per_day} short video(s) + ${a.posts_per_day} feed post(s) every day`,
       brand_colors: a.brand_colors,
@@ -152,8 +153,11 @@ async function basePrompt(job: Job): Promise<string> {
         feedToday.length
           ? `- ${posts} feed post${posts === 1 ? "" : "s"}: ${countOf(feedToday)} (set by the Manager's weekly mix, from the results)`
           : `- ${posts} feed post${posts === 1 ? "" : "s"}: format ${feedFormats.map((f) => `"${f}"`).join(" or ")}${feedFormats.length > 1 ? " (mix them; carousels for teaching, single posts for one bold idea)" : ""}`,
-        mix?.styles.length
-          ? `- Art styles for today's ${n} pieces (the Manager's weekly mix; one each, any order): ${mix.styles.map((s) => `"${s}"`).join(", ")}`
+        mix?.styles.length && posts
+          ? `- Art styles for today's feed posts (the Manager's weekly mix; any order): ${mix.styles.slice(0, posts).map((s) => `"${s}"`).join(", ")}`
+          : "",
+        reels
+          ? `- Reels: you decide each reel's animation look (art_style = an id from reel_looks), matched to its topic and tone. Keep the feed a mix: "paper-blueprint" whenever the reel explains how something works, the others for everything else, and don't give two reels in a row the same look.`
           : "",
         "Make the pieces of one day different from each other: different pillars, different hook styles. Space time-sensitive trends to the earliest days.",
         "",
@@ -200,10 +204,11 @@ async function basePrompt(job: Job): Promise<string> {
         job.kind === "video"
           ? "Turn this approved short-video script into a motion-graphics beat plan (scenes = voice lines, beats = a new animated visual every 1–2.5 s)."
           : `Turn this approved ${c.format === "carousel" ? "carousel" : "single post"} into a slide plan.`,
+        job.kind === "video" && isReelLook(c.art_style) ? `LOOK (decided by the Strategist — use exactly this as \`look\`): ${c.art_style}` : "",
         "",
         `ART STYLE (the image model adds it to painted backdrops; don't repeat style words in imagePrompt): ${style.label}`,
         job.kind === "video"
-          ? `RECURRING CHARACTER: ${a.character ? "yes — it is drawn and animated in code; use 'character' beats with a pose. Never put it (or any people) in imagePrompt." : "none — skip 'character' beats"}`
+          ? `RECURRING CHARACTER: ${a.character ? "yes — it is drawn and animated in code; use it via who 'mascot' in a scene or a 'character' beat, 2–3 times per reel." : "none — skip 'character' beats"}`
           : `RECURRING CHARACTER: ${a.character ? "yes — set withCharacter true where the character appears, and never name or describe it in imagePrompt (the pipeline inserts its description)" : "none — set withCharacter false everywhere"}`,
         `ACCOUNT LANGUAGE: ${a.language}`,
         ...(job.kind === "design" ? ["POSTER LOOK: slides render as bold flat posters drawn in code (no painted images; ignore the art style, leave imagePrompt empty)."] : []),

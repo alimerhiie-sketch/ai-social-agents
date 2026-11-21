@@ -20,6 +20,8 @@ const FPS = 30;
 const AUDIO_DELAY = 6; // frames between a scene starting and its voice starting (matches Reel.tsx)
 const TAIL = 0.45; // seconds of air after each voice line
 const SLIDE_SETTLED_FRAME = 150;
+// 3D looks need WebGL; the GitHub runner has no GPU, so use the software path there.
+const GL = process.platform === "linux" ? { gl: "swangle" } : undefined;
 
 const say = (msg) => console.log(`PROGRESS ${msg}`);
 
@@ -117,7 +119,8 @@ async function renderReel(serveUrl) {
     const images = {};
     // Motion scenes may have one painted plate (an empty environment in the account's art style, shown far
     // back and in the `painting` beat). The character is drawn in code, so plates never include it.
-    const wantsPaint = (s) => s.type === "illustration" || (s.type === "motion" && String(s.imagePrompt || "").trim());
+    // Painted plates only belong to the brand look; the animation looks are fully drawn in code.
+    const wantsPaint = (s) => s.type === "illustration" || (s.type === "motion" && (!spec.look || spec.look === "brand") && String(s.imagePrompt || "").trim());
     const painted = spec.scenes.filter(wantsPaint);
     let n = 0;
     for (const [i, s] of spec.scenes.entries()) {
@@ -160,8 +163,8 @@ async function renderReel(serveUrl) {
       scenes.push(scene);
     }
 
-    const inputProps = { scenes, palette: spec.palette, handle: spec.handle, showCaptions: spec.showCaptions ?? true, artStyle: spec.artStyle };
-    const composition = await selectComposition({ serveUrl, id: "Reel", inputProps });
+    const inputProps = { scenes, palette: spec.palette, handle: spec.handle, showCaptions: spec.showCaptions ?? true, artStyle: spec.artStyle, look: spec.look };
+    const composition = await selectComposition({ serveUrl, id: "Reel", inputProps, chromiumOptions: GL });
     const output = path.join(spec.outDir, "video.mp4");
     say(`Rendering ${composition.durationInFrames} frames (${(composition.durationInFrames / FPS).toFixed(1)}s)…`);
     let last = -1;
@@ -175,6 +178,7 @@ async function renderReel(serveUrl) {
       encodingBufferSize: "9000k",
       outputLocation: output,
       inputProps,
+      chromiumOptions: GL,
       onProgress: ({ progress }) => {
         const pct = Math.floor(progress * 10) * 10;
         if (pct !== last) {
@@ -186,7 +190,7 @@ async function renderReel(serveUrl) {
 
     // Cover frame: the hook once it has landed.
     const cover = path.join(spec.outDir, "cover.jpg");
-    await renderStill({ serveUrl, composition, frame: Math.min(50, composition.durationInFrames - 1), output: cover, inputProps, imageFormat: "jpeg", jpegQuality: 92 });
+    await renderStill({ serveUrl, composition, frame: Math.min(50, composition.durationInFrames - 1), output: cover, inputProps, imageFormat: "jpeg", jpegQuality: 92, chromiumOptions: GL });
 
     return { kind: "reel", files: ["video.mp4"], cover: "cover.jpg", durationSeconds: composition.durationInFrames / FPS };
   } finally {

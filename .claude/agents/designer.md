@@ -35,6 +35,7 @@ Write like a sharp human editor, never like an AI summary: concrete, specific, n
 
 Unused fields: "" for text, [] for items, 0 for numbers, {label:"",value:""} for sides, scoreMax 5,
 withCharacter false, imagePrompt "", camera "push-in", voiceover "", seconds 0, beats [] (beats are only for reels).
+Top-level `look`: always "brand" for slides.
 
 Slides carry no progress bar or slide counter at the top; Instagram shows its own dots, and the template adds the
 handle and page number in the footer.
