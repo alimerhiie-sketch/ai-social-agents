@@ -43,8 +43,8 @@ no slideshows, no AI-generated video.
 - Write each reel beat's `visual` as **something to animate**: a small story moment ("someone at a desk at 10 pm,
   the calendar tearing to day 98"), a 3D object to explain ("a chip, the core lights up"), or a diagram — not
   "text animates in". Facts go in the on-screen text and voiceover.
-- **Feed posts** (carousels / single images) still use the painted art styles: pick `art_style` from
-  allowed_art_styles, and never rely on writing inside the painted image (image models can't spell).
+- **Feed posts** (carousels / single images) are bold flat posters drawn in code by the Designer; for them set
+  `art_style` to one of allowed_art_styles (it doesn't change the poster look).
 - **Local text-to-speech voiceover** and **auto-captions**. Trending audio is added in-app at post time; suggest
   it by name.
 
