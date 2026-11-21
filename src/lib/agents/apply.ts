@@ -53,8 +53,7 @@ export async function applyResult(job: Job, data: unknown): Promise<string> {
         const beats = plan.scenes.reduce((n, s) => n + (s.beats?.length ?? 0), 0);
         return `${plan.scenes.length} scenes, ${beats} motion beats planned — rendering next`;
       }
-      const painted = plan.scenes.filter((s) => s.type === "illustration").length;
-      return `${plan.scenes.length} slides planned (${painted} illustrated) — rendering next`;
+      return `${plan.scenes.length} poster slide${plan.scenes.length === 1 ? "" : "s"} planned — rendering next`;
     }
     case "analyze":
       return applyAnalysis(job, data);

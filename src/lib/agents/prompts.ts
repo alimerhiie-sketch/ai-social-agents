@@ -206,6 +206,7 @@ async function basePrompt(job: Job): Promise<string> {
           ? `RECURRING CHARACTER: ${a.character ? "yes — it is drawn and animated in code; use 'character' beats with a pose. Never put it (or any people) in imagePrompt." : "none — skip 'character' beats"}`
           : `RECURRING CHARACTER: ${a.character ? "yes — set withCharacter true where the character appears, and never name or describe it in imagePrompt (the pipeline inserts its description)" : "none — set withCharacter false everywhere"}`,
         `ACCOUNT LANGUAGE: ${a.language}`,
+        ...(job.kind === "design" ? ["POSTER LOOK: slides render as bold flat posters drawn in code (no painted images; ignore the art style, leave imagePrompt empty)."] : []),
         "",
         "THE PIECE",
         JSON.stringify(piece, null, 2),

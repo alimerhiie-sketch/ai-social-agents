@@ -196,34 +196,17 @@ async function renderReel(serveUrl) {
 
 // ---------- slides (carousel or single post) ----------
 async function renderSlides(serveUrl) {
+  // Feed posts are flat posters drawn in code: no image model, no character reference.
   const files = [];
   const n = spec.scenes.length;
-  const style = spec.artStyle ? styleById(spec.artStyle) : null;
-  const seed = spec.seed ?? Math.floor(Math.random() * 1e6);
-  const { server, port } = await serve(spec.outDir);
-  try {
-  for (const [i, s] of spec.scenes.entries()) {
-    const scene = { ...s };
-    if (scene.type === "illustration" && style) {
-      const file = `img-${String(i + 1).padStart(2, "0")}.jpg`;
-      const out = path.join(spec.outDir, file);
-      if (!(fs.existsSync(out) && fs.statSync(out).size > 10_000)) {
-        say(`Painting slide ${i + 1} (${style.label}): ${String(scene.imagePrompt).slice(0, 70)}…`);
-        const r = await generateImage({ prompt: imagePrompt(scene.imagePrompt || scene.headline || "", style, scene.withCharacter ? spec.character : null), seed, out, aspect: "feed", reference: scene.withCharacter ? spec.characterRefReady : undefined });
-        say(`  ↳ ${r.provider}`);
-      }
-      scene.imageSrc = `http://127.0.0.1:${port}/${file}`;
-    }
+  for (const [i, scene] of spec.scenes.entries()) {
     say(`Slide ${i + 1}/${n}`);
-    const inputProps = { scene, index: i, total: n, palette: spec.palette, handle: spec.handle, isCover: i === 0, artStyle: spec.artStyle };
+    const inputProps = { scene, index: i, total: n, palette: spec.palette, handle: spec.handle, isCover: i === 0, artStyle: spec.artStyle, mascot: !!spec.character };
     const composition = await selectComposition({ serveUrl, id: "Slide", inputProps });
     const file = `slide-${String(i + 1).padStart(2, "0")}.jpg`;
     // Instagram's publishing API takes JPEG, not PNG.
     await renderStill({ serveUrl, composition, frame: SLIDE_SETTLED_FRAME, output: path.join(spec.outDir, file), inputProps, imageFormat: "jpeg", jpegQuality: 94 });
     files.push(file);
-  }
-  } finally {
-    server.close();
   }
   return { kind: "slides", files, cover: files[0], durationSeconds: 0 };
 }
@@ -249,7 +232,7 @@ function nextReset() {
 }
 
 try {
-  spec.characterRefReady = await ensureCharacterRef();
+  spec.characterRefReady = spec.kind === "reel" ? await ensureCharacterRef() : null;
   const serveUrl = await getServeUrl();
   const result = spec.kind === "reel" ? await renderReel(serveUrl) : await renderSlides(serveUrl);
   console.log(`RESULT ${JSON.stringify(result)}`);
