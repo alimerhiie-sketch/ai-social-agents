@@ -101,7 +101,8 @@ CREATE TABLE IF NOT EXISTS jobs (
   duration_ms INTEGER,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   started_at TEXT,
-  finished_at TEXT
+  finished_at TEXT,
+  upgrade_ids TEXT  -- ",3,7," = approved agent upgrades this job ran with
 );
 
 CREATE TABLE IF NOT EXISTS job_logs (
@@ -149,6 +150,34 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Agent Developer upgrade proposals (see src/lib/agents/upgrades.ts).
+CREATE TABLE IF NOT EXISTS agent_upgrades (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  account_id INTEGER REFERENCES accounts(id) ON DELETE CASCADE,  -- NULL = every account
+  job_id INTEGER,                         -- the Agent Developer run that proposed it
+  target_agent TEXT NOT NULL,             -- trend-scout | strategist | designer | video-producer
+  focus TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'add',       -- add | replace
+  before_text TEXT NOT NULL DEFAULT '',   -- replace: the passage it supersedes
+  after_text TEXT NOT NULL,               -- the instruction text sent to the agent (already safety-filtered)
+  source_type TEXT NOT NULL DEFAULT '',
+  source_url TEXT NOT NULL DEFAULT '',
+  evidence TEXT NOT NULL DEFAULT '',
+  why TEXT NOT NULL DEFAULT '',
+  success_metric TEXT NOT NULL DEFAULT '',
+  quality_score INTEGER NOT NULL DEFAULT 0,
+  risk_notes TEXT NOT NULL DEFAULT '',
+  safety_notes TEXT NOT NULL DEFAULT '',  -- what the safety filter removed, or why it was blocked
+  status TEXT NOT NULL DEFAULT 'pending', -- pending | approved | rejected | blocked | revoked
+  decision_note TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  decided_at TEXT,
+  applied_at TEXT,                        -- when it started going to the agent (approval time)
+  revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_upgrades_agent ON agent_upgrades(target_agent, status);
 
 CREATE INDEX IF NOT EXISTS idx_trends_account ON trends(account_id, status);
 CREATE INDEX IF NOT EXISTS idx_content_account ON content(account_id, status);

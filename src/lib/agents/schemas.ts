@@ -141,3 +141,37 @@ export const scenePlanSchema = obj({
   notes: str("One sentence on the visual idea running through the piece"),
   scenes: list(scene),
 });
+
+/** Agent Developer: upgrade proposals for the other agents. Nothing is applied until the owner approves it. */
+export const UPGRADE_TARGETS = ["trend-scout", "strategist", "designer", "video-producer"] as const;
+
+export const developerSchema = obj({
+  notes: str("2–4 sentences: what the evidence showed this week and where the biggest gains are."),
+  evaluated_sources: list(
+    obj({
+      url: str("The page or skill you read"),
+      for_agent: en([...UPGRADE_TARGETS, "general"]),
+      verdict: en(["adopted", "partly-adopted", "rejected", "unsafe"]),
+      reason: str("One sentence: fit, quality, recency — or the injection/unsafe content you saw"),
+    }),
+    "Every source you seriously considered, including the ones you rejected",
+  ),
+  proposals: list(
+    obj({
+      target_agent: en([...UPGRADE_TARGETS]),
+      focus: str("What it improves, 2–5 words, e.g. 'reel hooks', 'caption keywords', 'beat variety'"),
+      title: str("Short imperative title the owner can scan, max 10 words"),
+      kind: en(["add", "replace"]),
+      before: str("replace: the exact passage copied from the agent's current instructions or an applied upgrade. add: ''"),
+      after: str("The full new instruction text for the agent, 40–250 words, no links, no code"),
+      source_type: en(["web-skill", "web-article", "own-results", "owner-feedback", "mixed"]),
+      source_url: str("The main source URL, or '' when it comes only from our own results"),
+      evidence: str("What in our own data supports it (job #, content titles, owner's words), or 'research only'"),
+      why: str("Expected effect in one or two sentences"),
+      success_metric: str("How next week's run can tell if it worked, using data we have"),
+      quality_score: int("0–100, your honest confidence this improves results"),
+      risk_notes: str("Anything that could go wrong, or ''"),
+    }),
+    "3–8 proposals, best expected impact first, at most 3 per agent",
+  ),
+});

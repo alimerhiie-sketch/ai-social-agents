@@ -2,6 +2,8 @@ import { q, sql } from "../db";
 import type { Account, Job } from "../types";
 import { longDate, TZ, weekdayShort } from "../dates";
 import { ART_STYLES } from "../options";
+import { developerPrompt } from "./developer";
+import { upgradesBlock } from "./upgrades";
 
 // Builds the task prompt for each job kind. Built when the job STARTS, not when it is
 // queued, so a "plan" job that follows a "trends" job sees the trends that were just found.
@@ -66,7 +68,13 @@ function strategyBlock(a: Account) {
     : "STRATEGY\n(no strategy yet — infer sensible pillars from the profile)";
 }
 
+/** The task prompt, plus any upgrades the owner approved for this agent (see upgrades.ts). */
 export async function buildPrompt(job: Job): Promise<string> {
+  const base = await basePrompt(job);
+  return base ? base + (await upgradesBlock(job)) : base;
+}
+
+async function basePrompt(job: Job): Promise<string> {
   const a = job.account_id ? await q.account(job.account_id) : null;
   if (!a) throw new Error("Account not found for this job");
   const fb = await feedback(a.id);
@@ -193,6 +201,9 @@ export async function buildPrompt(job: Job): Promise<string> {
     case "render":
     case "publish":
       return "";
+
+    case "develop":
+      return developerPrompt(job, a);
 
     case "from-trend": {
       const t = job.ref_id ? await q.trend(job.ref_id) : null;

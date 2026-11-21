@@ -101,7 +101,7 @@ export type ContentItem = {
 };
 
 export type JobStatus = "queued" | "running" | "done" | "failed" | "cancelled";
-export type JobKind = "strategy" | "trends" | "plan" | "from-trend" | "video" | "design" | "render" | "publish";
+export type JobKind = "strategy" | "trends" | "plan" | "from-trend" | "video" | "design" | "render" | "publish" | "develop";
 
 export type Post = {
   id: number;
@@ -145,6 +145,8 @@ export type Job = {
   depends_on: number | null;
   target_date: string | null;
   not_before?: string | null;
+  /** Approved agent upgrades this job ran with, as ",3,7," (see src/lib/agents/upgrades.ts). */
+  upgrade_ids?: string | null;
   status: JobStatus;
   model: string | null;
   summary: string | null;

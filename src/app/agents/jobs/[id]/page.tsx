@@ -14,7 +14,9 @@ export default async function JobPage({ params }: { params: Promise<{ id: string
   const account = job.account_id ? await q.account(job.account_id) : null;
   const agent = agentById(job.agent);
   const resultHref =
-    job.kind === "trends"
+    job.kind === "develop"
+      ? "/upgrades"
+      : job.kind === "trends"
       ? `/trends?account=${job.account_id}`
       : job.kind === "strategy"
         ? `/accounts/${job.account_id}`

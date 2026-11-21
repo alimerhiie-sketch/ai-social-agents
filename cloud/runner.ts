@@ -15,7 +15,7 @@ import { log, modelFor } from "../src/lib/queue";
 import { applyResult } from "../src/lib/agents/apply";
 import { buildPrompt } from "../src/lib/agents/prompts";
 import { agentById, JOB_KINDS } from "../src/lib/agents/registry";
-import { planSchema, scenePlanSchema, strategySchema, trendsSchema } from "../src/lib/agents/schemas";
+import { developerSchema, planSchema, scenePlanSchema, strategySchema, trendsSchema } from "../src/lib/agents/schemas";
 import type { Job, JobKind } from "../src/lib/types";
 
 const ROOT = process.cwd(); // the workflow runs from the repo root
@@ -25,6 +25,7 @@ const STARTED = Date.now();
 const MAX_RUNTIME_MS = 5.5 * 3600_000; // stay under Actions' 6 h job limit
 const IDLE_EXIT_MS = 60_000;
 const AGENT_TIMEOUT_MS = 20 * 60_000;
+const DEVELOP_TIMEOUT_MS = 45 * 60_000; // the Agent Developer researches for every agent in one run
 const RENDER_TIMEOUT_MS = 45 * 60_000;
 
 const SCHEMAS: Partial<Record<JobKind, object>> = {
@@ -34,6 +35,7 @@ const SCHEMAS: Partial<Record<JobKind, object>> = {
   "from-trend": planSchema,
   video: scenePlanSchema,
   design: scenePlanSchema,
+  develop: developerSchema,
 };
 
 const say = (s: string) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${s}`);
@@ -135,6 +137,8 @@ async function runAgent(job: Job) {
   const agent = agentById(job.agent)!;
   const prompt = await buildPrompt(job);
   await log(job.id, `▸ ${agent.name} started in the cloud · model ${job.model}`);
+  const ups = (await q.job(job.id))?.upgrade_ids;
+  if (ups) await log(job.id, `▸ With your approved upgrades: ${ups.split(",").filter(Boolean).map((u) => `#${u}`).join(", ")}`);
   const args = [
     "-p",
     "--agent", agent.id,
@@ -176,7 +180,7 @@ async function runAgent(job: Job) {
   child.stderr!.on("data", (c: Buffer) => (stderr += c.toString("utf8")));
   child.stdin!.write(prompt);
   child.stdin!.end();
-  const code = await supervise(job, child, AGENT_TIMEOUT_MS);
+  const code = await supervise(job, child, job.kind === "develop" ? DEVELOP_TIMEOUT_MS : AGENT_TIMEOUT_MS);
   await Promise.allSettled(pending);
   if ((await q.job(job.id))?.status === "cancelled") return;
   const res = result as Record<string, unknown> | null;

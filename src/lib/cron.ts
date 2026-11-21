@@ -8,6 +8,7 @@ import type { IgMedia } from "./publish/instagram";
 import type { Connection, Post } from "./types";
 import { signedMediaUrl } from "./auth";
 import { enqueueCycle, enqueueProduce, markContentPostedIfDone, pinEnv, wakeRunner, type HqEnv } from "./queue";
+import { enqueueWeeklyDevelop } from "./agents/upgrades";
 
 // Runs every 5 minutes on Cloudflare (worker.ts → scheduled). This is what replaces the laptop:
 //  1. post whatever Instagram posts are due (two-phase: create container → publish when processed)
@@ -180,6 +181,8 @@ async function nightly(): Promise<string[]> {
     // Strategist + Trend Scout keep a week of scripts ahead (skips days that are already full).
     const ids = await enqueueCycle(a.id);
     out.push(`${a.name}: queued ${ids.length} planning jobs`);
+    // Once a week the Agent Developer proposes upgrades for the other agents (applied only when you approve).
+    if (await enqueueWeeklyDevelop(a.id)) out.push(`${a.name}: queued the weekly Agent Developer run`);
     // Produce everything you've approved.
     for (const c of await q.content({ accountId: a.id, status: "approved", limit: 100 })) await enqueueProduce(c.id);
     // Schedule everything you've signed off as ready to post.

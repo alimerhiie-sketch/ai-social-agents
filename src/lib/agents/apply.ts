@@ -1,6 +1,7 @@
 import { q, sql } from "../db";
 import type { Job, Strategy } from "../types";
 import { prettyDate, weekdayShort } from "../dates";
+import { storeProposals, type ProposalOut } from "./upgrades";
 
 // Writes an agent's structured output into the database. Returns a one-line summary.
 
@@ -58,6 +59,14 @@ export async function applyResult(job: Job, data: unknown): Promise<string> {
       return "Rendered";
     case "publish":
       return "Posted";
+    case "develop": {
+      const out = data as { notes: string; proposals: ProposalOut[]; evaluated_sources: { url: string; verdict: string }[] };
+      if (!Array.isArray(out?.proposals)) throw new Error("Agent Developer output is missing the proposals list");
+      const { pending, blocked } = await storeProposals(job, out.proposals);
+      const sources = out.evaluated_sources?.length ?? 0;
+      const unsafe = (out.evaluated_sources ?? []).filter((s) => s.verdict === "unsafe").length;
+      return `${pending} upgrade proposal${pending === 1 ? "" : "s"} waiting for your approval${blocked ? `, ${blocked} blocked by the safety filter` : ""} · ${sources} sources evaluated${unsafe ? ` (${unsafe} unsafe)` : ""}`;
+    }
     case "strategy": {
       const s = data as Strategy;
       if (!s?.pillars) throw new Error("Strategy output is missing pillars");

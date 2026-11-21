@@ -59,6 +59,15 @@ export const AGENTS: AgentDef[] = [
     tools: [],
   },
   {
+    id: "agent-developer",
+    name: "Agent Developer",
+    role: "Trains the team. Once a week it researches skills and techniques for each agent, studies their output against your feedback and the post results, and proposes exact instruction upgrades. Nothing changes until you approve it on the Upgrades page.",
+    phase: 4,
+    status: "active",
+    defaultModel: "opus",
+    tools: ["WebSearch", "WebFetch"],
+  },
+  {
     id: "publisher",
     name: "Publisher",
     role: "Posts to Instagram on schedule through the official API, and queues TikTok posts on your phone page with the caption ready to copy.",
@@ -89,4 +98,5 @@ export const JOB_KINDS: Record<JobKind, { agent: string; label: string; verb: st
   design: { agent: "designer", label: "Plan the slides", verb: "Planning the slides" },
   render: { agent: "renderer", label: "Render", verb: "Painting and rendering" },
   publish: { agent: "publisher", label: "Post to Instagram", verb: "Posting to Instagram" },
+  develop: { agent: "agent-developer", label: "Upgrade the agents", verb: "Researching agent upgrades" },
 };
