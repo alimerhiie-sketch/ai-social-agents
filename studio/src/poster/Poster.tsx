@@ -2,7 +2,7 @@ import React from "react";
 import { AbsoluteFill } from "remotion";
 import { loadFont as loadArchivoBlack } from "@remotion/google-fonts/ArchivoBlack";
 import { loadFont as loadArchivo } from "@remotion/google-fonts/Archivo";
-import type { Scene } from "../types";
+import type { Palette, Scene } from "../types";
 
 // Feed posts as bold flat posters, drawn entirely in code (no painted images).
 // One giant word or number per slide, flat colour blocks, and the account's mascot (Pip) as a flat character.
@@ -16,9 +16,77 @@ const H = 1350;
 const X = 70; // side margin
 const INNER = W - X * 2;
 
-type Tone = { bg: string; ink: string; em: string; muted: string; card: string; cardInk: string; line: string };
-const LIGHT: Tone = { bg: POSTER.light, ink: POSTER.navy, em: POSTER.blue, muted: "rgba(10,17,69,0.62)", card: POSTER.white, cardInk: POSTER.navy, line: POSTER.navy };
-const BLUE: Tone = { bg: POSTER.blue, ink: POSTER.light, em: POSTER.navy, muted: "rgba(238,241,255,0.78)", card: POSTER.light, cardInk: POSTER.navy, line: POSTER.navy };
+// ---------------------------------------------------------------- colours per account
+// Each account's brand colours [main, deep ink, accent, light ground]. AMX keeps the approved electric-blue set.
+// A light main colour (e.g. yellow) gets dark text on it, and emphasis becomes a highlighter mark so it stays readable.
+type Theme = { main: string; deep: string; light: string; accent: string; mainIsLight: boolean };
+const AMX_THEME: Theme = { main: POSTER.blue, deep: POSTER.navy, light: POSTER.light, accent: POSTER.sky, mainIsLight: false };
+let T: Theme = AMX_THEME;
+
+function luminance(hex: string) {
+  const h = hex.replace("#", "");
+  const n = parseInt(h.length === 3 ? h.split("").map((c) => c + c).join("") : h, 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * ch[0] + 0.7152 * ch[1] + 0.0722 * ch[2];
+}
+function alpha(hex: string, a: number) {
+  const n = parseInt(hex.replace("#", ""), 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+}
+
+function themeFor(palette?: Palette): Theme {
+  if (!palette || palette.field.toLowerCase() === "#1330e0") return AMX_THEME;
+  return { main: palette.field, deep: palette.deep, light: palette.ink, accent: palette.soft, mainIsLight: luminance(palette.field) > 0.45 };
+}
+
+type Tone = {
+  bg: string;
+  ink: string;
+  /** emphasised words */
+  em: React.CSSProperties;
+  /** giant numbers and scores */
+  big: string;
+  /** kicker bar, dividers, step numerals */
+  mark: string;
+  card: string;
+  cardInk: string;
+  line: string;
+  ghost: string;
+};
+function marker(bg: string, fg: string): React.CSSProperties {
+  // a band the height of the capitals only, so it never covers the line above
+  return { color: fg, backgroundImage: `linear-gradient(to bottom, transparent 16%, ${bg} 16%, ${bg} 90%, transparent 90%)`, padding: "0 0.1em", boxDecorationBreak: "clone", WebkitBoxDecorationBreak: "clone" };
+}
+
+function tones() {
+  const lightMain = T.mainIsLight;
+  const LIGHT: Tone = {
+    bg: T.light,
+    ink: T.deep,
+    em: lightMain ? marker(T.main, T.deep) : { color: T.main },
+    big: lightMain ? T.deep : T.main,
+    mark: lightMain ? T.accent : T.main,
+    card: POSTER.white,
+    cardInk: T.deep,
+    line: T.deep,
+    ghost: alpha(lightMain ? T.deep : T.main, lightMain ? 0.06 : 0.08),
+  };
+  const MAIN: Tone = {
+    bg: T.main,
+    ink: lightMain ? T.deep : T.light,
+    em: lightMain ? marker(T.deep, T.main) : { color: T.deep },
+    big: lightMain ? T.deep : T.light,
+    mark: T.deep,
+    card: lightMain ? POSTER.white : T.light,
+    cardInk: T.deep,
+    line: T.deep,
+    ghost: lightMain ? "rgba(0,0,0,0.07)" : "rgba(255,255,255,0.08)",
+  };
+  return { LIGHT, MAIN };
+}
 
 // ---------------------------------------------------------------- type fitting
 const CAPS = 0.69; // average Archivo Black capital width in em (with the tight tracking below)
@@ -61,12 +129,12 @@ export function fit(text: string, width: number, maxLines: number, max: number, 
 const plain = (t: string) => t.replace(/\*/g, "");
 
 /** "*word*" → emphasis colour. */
-function Rich({ text, em }: { text: string; em: string }) {
+function Rich({ text, em }: { text: string; em: React.CSSProperties }) {
   return (
     <>
       {text.split(/(\*[^*]+\*)/g).map((p, i) =>
         p.startsWith("*") && p.endsWith("*") && p.length > 2 ? (
-          <span key={i} style={{ color: em }}>
+          <span key={i} style={em}>
             {p.slice(1, -1)}
           </span>
         ) : (
@@ -83,7 +151,7 @@ function Kicker({ text, tone, style }: { text: string; tone: Tone; style?: React
   if (!text.trim()) return null;
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 16, fontFamily: archivo, fontWeight: 800, fontSize: 28, letterSpacing: "0.14em", textTransform: "uppercase", color: tone.ink, ...style }}>
-      <span style={{ width: 34, height: 8, background: tone.em === POSTER.navy ? POSTER.navy : POSTER.blue }} />
+      <span style={{ width: 34, height: 8, background: tone.mark }} />
       {plain(text)}
     </div>
   );
@@ -92,7 +160,7 @@ function Kicker({ text, tone, style }: { text: string; tone: Tone; style?: React
 function Headline({ text, tone, width = INNER, maxLines = 4, max = 120, style }: { text: string; tone: Tone; width?: number; maxLines?: number; max?: number; style?: React.CSSProperties }) {
   const size = fit(plain(text).toUpperCase(), width, maxLines, max);
   return (
-    <div style={{ ...upper, fontSize: size, color: tone.ink, maxWidth: width, ...style }}>
+    <div style={{ ...upper, fontSize: size, color: tone.ink, maxWidth: width, ...(tone.em.backgroundImage ? { lineHeight: 1.02 } : {}), ...style }}>
       <Rich text={text} em={tone.em} />
     </div>
   );
@@ -145,7 +213,7 @@ export function FlatPip({ size = 400, pose = "idle" }: { size?: number; pose?: P
 }
 
 // ---------------------------------------------------------------- slides
-type P = { scene: Scene; index: number; total: number; handle: string; mascot: boolean };
+type P = { scene: Scene; index: number; total: number; handle: string; mascot: boolean; palette?: Palette };
 
 function Footer({ tone, handle, right }: { tone: Tone; handle: string; right: string }) {
   return (
@@ -157,14 +225,15 @@ function Footer({ tone, handle, right }: { tone: Tone; handle: string; right: st
 }
 
 function Cover({ scene, mascot, tone }: P & { tone: Tone }) {
+  const { LIGHT, MAIN } = tones();
   const big = plain(scene.number || "").trim();
   if (big) {
     // Split poster: the big graphic in a colour block, the hook underneath, Pip sitting on the seam.
     const bigSize = Math.min(460, fit(big.toUpperCase(), INNER, 1, 460, 120, 0.74));
     return (
       <AbsoluteFill style={{ background: LIGHT.bg }}>
-        <div style={{ height: 600, background: POSTER.blue, display: "flex", alignItems: "center", padding: `0 ${X - 8}px`, overflow: "hidden" }}>
-          <span style={{ ...upper, fontSize: bigSize, color: POSTER.light, letterSpacing: "-0.06em", lineHeight: 0.8, whiteSpace: "nowrap" }}>{big}</span>
+        <div style={{ height: 600, background: T.main, display: "flex", alignItems: "center", padding: `0 ${X - 8}px`, overflow: "hidden" }}>
+          <span style={{ ...upper, fontSize: bigSize, color: MAIN.big, letterSpacing: "-0.06em", lineHeight: 0.8, whiteSpace: "nowrap" }}>{big}</span>
         </div>
         <div style={{ position: "absolute", left: X, top: 660, right: X }}>
           <Kicker text={scene.kicker} tone={LIGHT} style={{ marginBottom: 26 }} />
@@ -198,7 +267,7 @@ function Statement({ scene, index, tone }: P & { tone: Tone }) {
   return (
     <AbsoluteFill style={{ background: tone.bg }}>
       {/* the slide number as a ghost graphic */}
-      <div style={{ ...upper, position: "absolute", right: -30, bottom: -90, fontSize: 640, color: tone.bg === POSTER.blue ? "rgba(255,255,255,0.08)" : "rgba(31,59,255,0.08)", letterSpacing: "-0.08em" }}>
+      <div style={{ ...upper, position: "absolute", right: -30, bottom: -90, fontSize: 640, color: tone.ghost, letterSpacing: "-0.08em" }}>
         {String(index + 1).padStart(2, "0")}
       </div>
       <div style={{ position: "absolute", left: X, right: X, top: 110 }}>
@@ -206,7 +275,7 @@ function Statement({ scene, index, tone }: P & { tone: Tone }) {
         <Headline text={scene.headline} tone={tone} maxLines={5} max={140} />
       </div>
       <div style={{ position: "absolute", left: X, right: X, bottom: 150 }}>
-        <div style={{ width: 120, height: 10, background: tone.em, marginBottom: 30 }} />
+        <div style={{ width: 120, height: 10, background: tone.mark, marginBottom: 30 }} />
         <Body text={scene.subline} tone={tone} size={40} />
       </div>
     </AbsoluteFill>
@@ -227,7 +296,7 @@ function ListSlide({ scene, tone, steps }: P & { tone: Tone; steps?: boolean }) 
           {items.map((it, i) =>
             steps ? (
               <div key={i} style={{ display: "flex", alignItems: "center", gap: 30, borderTop: `8px solid ${tone.ink}`, paddingTop: 18 }}>
-                <span style={{ ...upper, fontSize: n > 4 ? 76 : 96, color: tone.em, width: 120, lineHeight: 0.85 }}>{i + 1}</span>
+                <span style={{ ...upper, fontSize: n > 4 ? 76 : 96, color: tone.bg === T.main ? tone.mark : T.mainIsLight ? T.accent : T.main, width: 120, lineHeight: 0.85 }}>{i + 1}</span>
                 <span style={{ fontFamily: archivo, fontWeight: 700, fontSize: cardSize, lineHeight: 1.15, color: tone.ink }}>{plain(it)}</span>
               </div>
             ) : (
@@ -246,7 +315,7 @@ function ListSlide({ scene, tone, steps }: P & { tone: Tone; steps?: boolean }) 
                   marginRight: 10,
                 }}
               >
-                <span style={{ ...upper, fontSize: cardSize + 8, color: POSTER.blue, minWidth: 44 }}>{i + 1}</span>
+                <span style={{ ...upper, fontSize: cardSize + 8, color: T.mainIsLight ? T.accent : T.main, minWidth: 44 }}>{i + 1}</span>
                 <span style={{ fontFamily: archivo, fontWeight: 800, fontSize: cardSize, lineHeight: 1.12, color: tone.cardInk }}>{plain(it)}</span>
               </div>
             ),
@@ -264,7 +333,7 @@ function Stat({ scene, tone }: P & { tone: Tone }) {
     <AbsoluteFill style={{ background: tone.bg }}>
       <div style={{ position: "absolute", left: X, right: X, top: 100, bottom: 130, display: "flex", flexDirection: "column" }}>
         <Kicker text={scene.kicker} tone={tone} />
-        <div style={{ ...upper, fontSize: size, color: tone.em === POSTER.navy ? POSTER.light : POSTER.blue, letterSpacing: "-0.07em", lineHeight: 0.8, marginTop: 50, whiteSpace: "nowrap" }}>{num}</div>
+        <div style={{ ...upper, fontSize: size, color: tone.big, letterSpacing: "-0.07em", lineHeight: 0.8, marginTop: 50, whiteSpace: "nowrap" }}>{num}</div>
         <Headline text={scene.numberLabel || scene.headline} tone={tone} maxLines={3} max={92} style={{ marginTop: 40 }} />
         <Body text={scene.subline} tone={tone} style={{ marginTop: "auto" }} />
       </div>
@@ -277,9 +346,9 @@ function Compare({ scene, tone }: P & { tone: Tone }) {
     const v = plain(s.value);
     const vs = fit(v.toUpperCase(), 380, 5, 84, 36);
     return (
-      <div style={{ flex: 1, background: filled ? POSTER.navy : POSTER.white, border: `6px solid ${POSTER.navy}`, borderRadius: 22, padding: "64px 30px 34px", display: "flex", flexDirection: "column", gap: 20, boxShadow: `10px 10px 0 ${POSTER.navy}` }}>
-        <div style={{ fontFamily: archivo, fontWeight: 800, fontSize: 26, letterSpacing: "0.12em", textTransform: "uppercase", color: filled ? POSTER.sky : POSTER.blue }}>{plain(s.label)}</div>
-        <div style={{ ...upper, fontSize: vs, color: filled ? POSTER.light : POSTER.navy }}>{v}</div>
+      <div style={{ flex: 1, background: filled ? T.deep : POSTER.white, border: `6px solid ${T.deep}`, borderRadius: 22, padding: "64px 30px 34px", display: "flex", flexDirection: "column", gap: 20, boxShadow: `10px 10px 0 ${T.deep}` }}>
+        <div style={{ fontFamily: archivo, fontWeight: 800, fontSize: 26, letterSpacing: "0.12em", textTransform: "uppercase", color: filled ? (T.mainIsLight ? T.main : T.accent) : T.mainIsLight ? T.accent : T.main }}>{plain(s.label)}</div>
+        <div style={{ ...upper, fontSize: vs, color: filled ? T.light : T.deep }}>{v}</div>
       </div>
     );
   };
@@ -291,7 +360,7 @@ function Compare({ scene, tone }: P & { tone: Tone }) {
         <div style={{ display: "flex", gap: 28, marginTop: 56, position: "relative", minHeight: 440 }}>
           {side(scene.left, false)}
           {side(scene.right, true)}
-          <div style={{ position: "absolute", left: "50%", top: -40, transform: "translateX(-50%) rotate(-8deg)", width: 120, height: 120, borderRadius: 60, background: POSTER.blue, border: `6px solid ${POSTER.navy}`, display: "flex", alignItems: "center", justifyContent: "center", ...upper, fontSize: 46, color: POSTER.light }}>
+          <div style={{ position: "absolute", left: "50%", top: -40, transform: "translateX(-50%) rotate(-8deg)", width: 120, height: 120, borderRadius: 60, background: T.main, border: `6px solid ${T.deep}`, display: "flex", alignItems: "center", justifyContent: "center", ...upper, fontSize: 46, color: T.mainIsLight ? T.deep : T.light }}>
             VS
           </div>
         </div>
@@ -304,7 +373,7 @@ function Compare({ scene, tone }: P & { tone: Tone }) {
 function Verdict({ scene, tone }: P & { tone: Tone }) {
   const max = Math.max(1, Math.min(10, scene.scoreMax || 5));
   const score = Math.max(0, Math.min(max, Math.round(scene.score || 0)));
-  const big = tone.em === POSTER.navy ? POSTER.light : POSTER.blue;
+  const big = tone.big;
   return (
     <AbsoluteFill style={{ background: tone.bg }}>
       <div style={{ position: "absolute", left: X, right: X, top: 100, bottom: 130, display: "flex", flexDirection: "column" }}>
@@ -316,7 +385,7 @@ function Verdict({ scene, tone }: P & { tone: Tone }) {
         </div>
         <div style={{ display: "flex", gap: 12, marginTop: 44 }}>
           {Array.from({ length: max }).map((_, i) => (
-            <div key={i} style={{ flex: 1, height: 58, borderRadius: 12, border: `6px solid ${tone.line === POSTER.navy && tone.bg === POSTER.blue ? POSTER.navy : POSTER.navy}`, background: i < score ? big : "transparent" }} />
+            <div key={i} style={{ flex: 1, height: 58, borderRadius: 12, border: `6px solid ${T.deep}`, background: i < score ? big : "transparent" }} />
           ))}
         </div>
         <Body text={scene.subline} tone={tone} size={34} style={{ marginTop: "auto" }} />
@@ -326,7 +395,7 @@ function Verdict({ scene, tone }: P & { tone: Tone }) {
 }
 
 function Cta({ scene, mascot }: P) {
-  const tone = BLUE;
+  const tone = tones().MAIN;
   return (
     <AbsoluteFill style={{ background: tone.bg }}>
       <div style={{ position: "absolute", left: X, right: X, top: 110 }}>
@@ -338,9 +407,9 @@ function Cta({ scene, mascot }: P) {
           <FlatPip size={380} pose="cheer" />
         </div>
       )}
-      <div style={{ position: "absolute", left: X, bottom: 130, display: "flex", gap: 40, ...upper, fontSize: 44, color: POSTER.navy }}>
+      <div style={{ position: "absolute", left: X, bottom: 130, display: "flex", gap: 40, ...upper, fontSize: 44, color: T.deep }}>
         <span>Save</span>
-        <span style={{ color: POSTER.light }}>·</span>
+        <span style={{ color: T.light }}>·</span>
         <span>Send</span>
       </div>
     </AbsoluteFill>
@@ -349,6 +418,8 @@ function Cta({ scene, mascot }: P) {
 
 export function PosterSlide(p: P) {
   const { scene, index, total, handle } = p;
+  T = themeFor(p.palette);
+  const { LIGHT, MAIN: BLUE } = tones();
   const cover = index === 0 && (scene.type === "hook" || scene.type === "illustration" || total > 1);
   // Alternate the ground so a carousel has rhythm when swiped; the cover and the CTA have fixed grounds.
   const tone = index % 2 === 1 ? BLUE : LIGHT;
