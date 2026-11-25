@@ -16,7 +16,7 @@ const kalam = loadKalam("normal", { weights: ["700"], subsets: ["latin"] }).font
 const grotesk = loadSpaceGrotesk("normal", { weights: ["500", "700"], subsets: ["latin"] }).fontFamily;
 const fredoka = loadFredoka("normal", { weights: ["600", "700"], subsets: ["latin"] }).fontFamily;
 
-export type LookId = "brand" | "doodle" | "paper" | "lofi" | "blueprint" | "cosmic" | "paper-blueprint";
+export type LookId = "brand" | "doodle" | "paper" | "lofi" | "blueprint" | "cosmic" | "paper-blueprint" | "cinematic";
 
 export type Cast = {
   /** outline colour; "" = no outline */
@@ -200,6 +200,24 @@ export const LOOKS = {
 // Paper cartoon story that cuts to 3D blueprint explainers: everything is paper, except `object` beats,
 // which open onto the blueprint world (see Beats.tsx).
 LOOKS["paper-blueprint"] = { ...LOOKS.paper, id: "paper-blueprint", label: "Paper cartoon × 3D blueprint" };
+
+// Photoreal, Zack D. Films-style: every beat is one realistic shot (free Flux frame) with a real camera move,
+// a film grade, big captions with the key word in safety yellow, on-image callouts and synthesized SFX.
+LOOKS.cinematic = {
+  ...LOOKS.brand,
+  id: "cinematic",
+  label: "Cinematic photoreal",
+  bg: "#050505",
+  ink: "#FFFFFF",
+  paper: "#050505",
+  accent: "#FFC400",
+  accent2: "#FF4D1A",
+  warm: "#FFC400",
+  panel: "rgba(0,0,0,0.55)",
+  font: display,
+  bodyFont: body,
+  weight: 800,
+};
 
 /** The look an `object` beat is drawn in, inside a reel of `look`. */
 export const objectLook = (look: Look): Look => (look.id === "paper-blueprint" ? LOOKS.blueprint : look);

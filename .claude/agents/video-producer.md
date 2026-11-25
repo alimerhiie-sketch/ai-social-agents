@@ -30,6 +30,7 @@ on a bench before phones), make it a `scene`.
 | `blueprint` | 3D technical cutaway on a blueprint grid, callout labels | how something works: chips, models, data centres, hardware, "explained" |
 | `cosmic` | glowing 3D objects in a purple starfield, game-like | big ideas, the future, launches, "wow" news, rankings |
 | `brand` | AMX blue motion graphics | only when nothing above fits |
+| `cinematic` | photoreal live-action shots, Zack D. Films style (only when the Strategist gives it) | the body, machines, what-if, the real world |
 
 Stay in one look for the whole reel. In `paper-blueprint`, tell the story with paper `scene`s and switch to
 the blueprint for every `object` beat (2–5 of them, ideally entering with `wipe` or `zoom`), then come back to the
@@ -89,10 +90,34 @@ story: e.g. person confused at a desk → blueprint of a chip with callouts → 
 Aim for **at least half the beats as `scene` or `object`**. In `blueprint`/`cosmic` lean on `object`; in
 `doodle`/`paper`/`lofi` lean on `scene`; in `paper-blueprint` alternate story scenes and blueprint objects.
 
+**Cinematic look (`look: "cinematic"`) — different rules.** Every beat is a `shot`: one photoreal frame
+(generated for free) brought to life with a real camera move, a film grade, big captions and sound design. It
+must look and feel like a Zack D. Films reel: fast, real, catchy, never slow or fake-looking.
+
+| field | for a `shot` |
+|---|---|
+| `imagePrompt` | one realistic frame, 1–2 sentences: the subject, the action or state, the setting, the light. Show the real thing (an x-ray of the stomach, a cutaway of the fridge's compressor, the plane over the curve of the Earth). No style words (the cinematographer look is added), no text, signs or logos in the picture, no real famous people. If a person recurs, describe them **identically** in every prompt (e.g. "a man in his 30s with short dark hair and a grey t-shirt"). |
+| `move` | `push-in` (default, tension), `pull-out` (reveal scale), `pan-left`/`pan-right` (travel), `tilt-up`/`tilt-down` (height, falling), `orbit` (show a 3D thing), `crash-zoom` (the shock). Never the same move twice in a row. |
+| `callout` + `at` + `text`/`number` | point at the thing: `arrow` or `label` (text ≤ 3 words), `ring` around it, `xray` (see-through lens on the body or a machine), `counter` (a big yellow number counting up, `number` + `text` label). `at` = where the thing is in the frame (x, y from 0 to 1). About half the shots get one; "none" otherwise. |
+| `transition` | `cut` for most shots (hard cuts are the style), `whip` or `zoom` when the place changes, `flash` ONLY on the twist / big-number beat (it adds a flash, an impact and a riser before it — 1–2 per reel). |
+
+- **Length: 18–32 seconds.** The whole voiceover is at most **75 words**: tighten the script's lines (cut
+  filler, merge sentences) without changing or adding facts. Every line is setup → twist → payoff.
+- **12–16 beats, each 0.8–1.5 s** (3–5 spoken words). At most **14 different `imagePrompt`s** per reel (the
+  free image budget): reuse a prompt word for word to hold a shot across two beats with a different move or
+  callout.
+- Beat 1 is the hook, on screen and spoken at 0.0 s, on the most striking shot. The **last beat repeats the
+  first beat's `imagePrompt` word for word** so the reel loops.
+- The key word of each line goes in `*asterisks*` in `say` (it turns yellow in the captions); numbers are yellow
+  automatically.
+- Unused fields on a shot: `set` "none", `action` "stand", `who` "person", `props` [], `shot` "wide", `object`
+  "none", `items` [], `icon` "", `level` 0, `pose` "idle". In every other look, set `imagePrompt` "", `move`
+  "push-in", `callout` "none", `at` {x: 0.5, y: 0.5}.
+
 Unused fields: "" for text, [] for items/props, 0 for numbers, `pose` "idle", `set` "none", `action` "stand",
 `who` "person", `shot` "wide", `object` "none".
 
-**Transitions** (how a beat enters): `cut` (quick follow-up), `whip` (moving on), `zoom` (deeper into a
+**Transitions** (how a beat enters; `flash` is for the cinematic look only): `cut` (quick follow-up), `whip` (moving on), `zoom` (deeper into a
 detail), `wipe` (new section), `iris` (a reveal). Vary them.
 
 ## 4. Rules

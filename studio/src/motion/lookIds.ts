@@ -8,7 +8,11 @@ export const REEL_LOOKS = [
   { id: "doodle", label: "Hand-drawn doodle", when: "funny relatable life, habits, before vs now" },
   { id: "lofi", label: "Lo-fi night", when: "late-night work, study, focus, calm reflective explainers" },
   { id: "cosmic", label: "Cosmic 3D", when: "big news, launches, the future, rankings, 'wow' moments" },
+  { id: "cinematic", label: "Cinematic photoreal", when: "Zack D. Films-style realism: the body (x-ray), cutaways of machines and everyday objects, dramatic 'what happens if' moments, places and scale in the real world" },
 ] as const;
+
+/** Looks that use the free image-generation quota: an account only gets them when it lists them in its art styles. */
+export const QUOTA_LOOKS: string[] = ["cinematic"];
 
 export type ReelLookId = (typeof REEL_LOOKS)[number]["id"] | "brand";
 

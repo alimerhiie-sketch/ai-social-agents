@@ -5,6 +5,7 @@
 // Prints "PROGRESS <text>" lines while working and one final "RESULT <json>" line.
 
 import crypto from "node:crypto";
+import os from "node:os";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -12,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, renderStill, selectComposition } from "@remotion/renderer";
 import { generateImage } from "./images.mjs";
+import { writeSfx } from "./sfx.mjs";
 import { imagePrompt, styleById } from "../src/artStyles.ts";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -143,18 +145,22 @@ async function renderReel(serveUrl) {
       images[i] = `http://127.0.0.1:${port}/${file}`;
     }
 
+    // Cinematic look: one photoreal frame per shot beat (free Flux), cached by prompt, one seed per reel.
+    const shotScenes = spec.look === "cinematic" ? await paintShots(spec.scenes, seed, port) : spec.scenes;
+    const sfx = spec.look === "cinematic" ? Object.fromEntries(Object.entries(writeSfx(spec.outDir)).map(([k, f]) => [k, `http://127.0.0.1:${port}/${f}`])) : undefined;
+
     const scenes = [];
-    for (const [i, s] of spec.scenes.entries()) {
+    for (const [i, s] of shotScenes.entries()) {
       const scene = { ...s };
       if (images[i]) scene.imageSrc = images[i];
       if (tts && s.voiceover?.trim()) {
         say(`Voice ${i + 1}/${spec.scenes.length}: "${s.voiceover.slice(0, 60)}"`);
-        const audio = await tts.generate(s.voiceover.replace(/[*]/g, ""), { voice: spec.voice, speed: spec.speed ?? 1.05 });
+        const audio = await tts.generate(s.voiceover.replace(/[*]/g, ""), { voice: spec.voice, speed: spec.look === "cinematic" ? Math.max(spec.speed ?? 1, 1.2) : spec.speed ?? 1.05 });
         const file = `vo-${String(i + 1).padStart(2, "0")}.wav`;
         await audio.save(path.join(spec.outDir, file));
         const secs = audio.audio.length / audio.sampling_rate;
         scene.audioSrc = `http://127.0.0.1:${port}/${file}`;
-        scene.durationInFrames = Math.max(AUDIO_DELAY + Math.ceil((secs + TAIL) * FPS), 45);
+        scene.durationInFrames = Math.max(AUDIO_DELAY + Math.ceil((secs + (spec.look === "cinematic" ? 0.1 : TAIL)) * FPS), spec.look === "cinematic" ? 24 : 45);
         scene.voiceFrames = Math.round(secs * FPS);
         scene.captions = captionsFor(s.voiceover, secs);
       } else {
@@ -163,7 +169,7 @@ async function renderReel(serveUrl) {
       scenes.push(scene);
     }
 
-    const inputProps = { scenes, palette: spec.palette, handle: spec.handle, showCaptions: spec.showCaptions ?? true, artStyle: spec.artStyle, look: spec.look };
+    const inputProps = { scenes, palette: spec.palette, handle: spec.handle, showCaptions: spec.showCaptions ?? true, artStyle: spec.artStyle, look: spec.look, sfx };
     const composition = await selectComposition({ serveUrl, id: "Reel", inputProps, chromiumOptions: GL });
     const output = path.join(spec.outDir, "video.mp4");
     say(`Rendering ${composition.durationInFrames} frames (${(composition.durationInFrames / FPS).toFixed(1)}s)…`);
@@ -173,6 +179,8 @@ async function renderReel(serveUrl) {
       serveUrl,
       codec: "h264",
       // Delivery quality: Instagram/TikTok re-encode to ~3–5 Mbps anyway, and cloud storage caps files at 25 MB.
+      // every core: Remotion defaults to half, and the runner is CPU-only
+      concurrency: os.cpus().length,
       crf: 21,
       encodingMaxRate: "4500k",
       encodingBufferSize: "9000k",
@@ -196,6 +204,47 @@ async function renderReel(serveUrl) {
   } finally {
     server.close();
   }
+}
+
+// ---------- cinematic shots ----------
+// The owner's standing cinematographer rule for every generated image.
+const CINE =
+  "Photorealistic cinematic still, shot on ARRI Alexa 65 with a 40mm prime, motivated Rembrandt key light with soft falloff, Kodak Vision3 5219 film stock, fine grain, natural skin texture, shallow depth of field, high dynamic range, documentary realism, no text, no watermark.";
+// ~120 free-tier neurons per 832x1472 frame; the daily allowance is shared by every account.
+const MAX_SHOTS = 14;
+
+async function paintShots(srcScenes, seed, port) {
+  const scenes = srcScenes.map((s) => ({ ...s, beats: (s.beats ?? []).map((b) => ({ ...b })) }));
+  const shots = scenes.flatMap((s) => s.beats).filter((b) => b.visual === "shot" && String(b.imagePrompt || "").trim());
+  const unique = [...new Set(shots.map((b) => b.imagePrompt.trim()))];
+  const painted = new Map();
+  let n = 0;
+  let last = null;
+  for (const b of shots) {
+    const p = b.imagePrompt.trim();
+    if (!painted.has(p)) {
+      if (painted.size >= MAX_SHOTS) {
+        // over budget: hold the previous frame (the camera move and callout still change)
+        b.imageSrc = last;
+        continue;
+      }
+      const prompt = `${p} Vertical 9:16 frame, the subject large and centred. ${CINE}`;
+      const file = `shot-${crypto.createHash("sha1").update(`${prompt}|${seed}`).digest("hex").slice(0, 12)}.jpg`;
+      const out = path.join(spec.outDir, file);
+      n++;
+      if (fs.existsSync(out) && fs.statSync(out).size > 10_000) say(`Shot ${n}/${Math.min(unique.length, MAX_SHOTS)}: already painted`);
+      else {
+        say(`Shot ${n}/${Math.min(unique.length, MAX_SHOTS)}: ${p.slice(0, 70)}…`);
+        const t0 = Date.now();
+        const r = await generateImage({ prompt, seed, out, aspect: "portrait" });
+        say(`  ↳ ${r.provider} in ${((Date.now() - t0) / 1000).toFixed(0)}s`);
+      }
+      painted.set(p, `http://127.0.0.1:${port}/${file}`);
+    }
+    b.imageSrc = painted.get(p);
+    last = b.imageSrc;
+  }
+  return scenes;
 }
 
 // ---------- slides (carousel or single post) ----------

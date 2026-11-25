@@ -8,16 +8,18 @@ import { PIP } from "./Mascot";
 import { inOut, pr, prIn, themeFor, type Theme } from "./theme";
 import { AUDIO_DELAY, OUT, placeBeats, type PlacedBeat } from "./timing";
 import { lookById, type Look } from "./looks";
+import { Flash } from "./cine/Shot";
 
 const W = 1080;
 const H = 1920;
 
 /** Enter lengths per transition (frames). */
-const ENTER: Record<BeatTransition, number> = { cut: 8, whip: 11, zoom: 12, wipe: 13, iris: 14 };
+const ENTER: Record<BeatTransition, number> = { cut: 8, whip: 11, zoom: 12, wipe: 13, iris: 14, flash: 2 };
 const SLANT = 300;
 
-export function MotionReel({ scenes, palette, showCaptions, style, sceneFrames, mascot, look: lookId }: ReelProps & { style: ArtStyle | null; sceneFrames: (s: Scene) => number }) {
+export function MotionReel({ scenes, palette, showCaptions, style, sceneFrames, mascot, look: lookId, sfx }: ReelProps & { style: ArtStyle | null; sceneFrames: (s: Scene) => number }) {
   const look = lookById(lookId);
+  const cine = look.id === "cinematic";
   const theme = themeFor(palette, style, look);
   const placed = placeBeats(scenes, sceneFrames);
   const sceneStarts: number[] = [];
@@ -34,21 +36,24 @@ export function MotionReel({ scenes, palette, showCaptions, style, sceneFrames, 
       </Camera>
       {look.boil && <BoilDefs />}
       {/* beats ride the same camera on their own flat layer, so they never intersect the world's planes */}
-      <Camera placed={placed} filter={look.boil ? "url(#boil)" : undefined}>
+      <Camera placed={placed} filter={look.boil ? "url(#boil)" : undefined} still={cine}>
         {placed.map((p) => (
           <Sequence key={p.index} from={p.from} durationInFrames={p.d + (p.last ? 0 : OUT)} name={`${p.sceneIndex + 1}.${p.index + 1} ${p.beat.visual}`}>
             <BeatShell p={p} theme={theme}>
               <BeatVisual beat={p.beat} scene={p.scene} d={p.d} theme={theme} look={look} mascot={mascot ?? PIP} seed={p.index + 1} />
             </BeatShell>
+            {p.beat.transition === "flash" && p.index > 0 && <FlashAt />}
           </Sequence>
         ))}
       </Camera>
 
       {showCaptions && placed.map((p) => (p.beat.visual === "title" || !p.words.length ? null : (
         <Sequence key={`c${p.index}`} from={p.from} durationInFrames={p.d} name={`captions ${p.index + 1}`}>
-          <Caption p={p} theme={theme} />
+          {cine ? <CineCaption p={p} /> : <Caption p={p} theme={theme} />}
         </Sequence>
       )))}
+
+      {cine && sfx && <SoundDesign placed={placed} sfx={sfx} />}
 
       {scenes.map((s, i) =>
         s.audioSrc ? (
@@ -58,7 +63,7 @@ export function MotionReel({ scenes, palette, showCaptions, style, sceneFrames, 
         ) : null,
       )}
 
-      <Finish theme={theme} />
+      {!cine && <Finish theme={theme} />}
     </AbsoluteFill>
   );
 }
@@ -66,8 +71,10 @@ export function MotionReel({ scenes, palette, showCaptions, style, sceneFrames, 
 // ---------------------------------------------------------------------------
 // Camera: a slow drift through a 3D space, with a small push on every new beat.
 
-function Camera({ placed, children, depth = false, filter }: { placed: PlacedBeat[]; children: React.ReactNode; depth?: boolean; filter?: string }) {
+function Camera({ placed, children, depth = false, filter, still = false }: { placed: PlacedBeat[]; children: React.ReactNode; depth?: boolean; filter?: string; still?: boolean }) {
   const f = useCurrentFrame();
+  // the cinematic look's shots carry their own camera
+  if (still) return <AbsoluteFill style={{ filter }}>{children}</AbsoluteFill>;
   const cur = [...placed].reverse().find((p) => f >= p.from);
   const since = cur ? f - cur.from : 99;
   const kick = cur && cur.index > 0 ? (1 - pr(since, 0, 16)) * 0.025 : 0;
@@ -333,7 +340,7 @@ function BoilDefs() {
   return (
     <svg style={{ position: "absolute", width: 0, height: 0 }}>
       <filter id="boil" x="-5%" y="-5%" width="110%" height="110%">
-        <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves={2} seed={Math.floor(f / 3) % 7} />
+        <feTurbulence type="fractalNoise" baseFrequency="0.03" numOctaves={1} seed={Math.floor(f / 3) % 7} />
         <feDisplacementMap in="SourceGraphic" scale={5} xChannelSelector="R" yChannelSelector="G" />
       </filter>
     </svg>
@@ -404,5 +411,87 @@ function LookWorld({ look }: { look: Look }) {
         <div style={{ position: "absolute", right: -260, top: 200, width: 800, height: 800, borderRadius: "50%", background: `radial-gradient(circle, ${withAlpha(look.accent2, 0.18)} 0%, transparent 65%)` }} />
       </AbsoluteFill>
     </>
+  );
+}
+
+function FlashAt() {
+  const f = useCurrentFrame();
+  return <Flash f={f} />;
+}
+
+/** Whooshes on moving cuts, an impact on the twist (flash), a riser leading into it. Synthesized, so free. */
+function SoundDesign({ placed, sfx }: { placed: PlacedBeat[]; sfx: NonNullable<ReelProps["sfx"]> }) {
+  const out: React.ReactNode[] = [];
+  for (const p of placed) {
+    if (p.index === 0) continue;
+    const t = p.beat.transition;
+    if ((t === "whip" || t === "zoom" || t === "wipe") && sfx.whoosh) {
+      out.push(
+        <Sequence key={`w${p.index}`} from={Math.max(0, p.from - 4)} durationInFrames={20} name={`whoosh ${p.index + 1}`}>
+          <Audio src={sfx.whoosh} volume={0.32} />
+        </Sequence>,
+      );
+    }
+    if (t === "flash") {
+      if (sfx.riser && p.from > 45)
+        out.push(
+          <Sequence key={`r${p.index}`} from={p.from - 42} durationInFrames={44} name={`riser ${p.index + 1}`}>
+            <Audio src={sfx.riser} volume={0.28} />
+          </Sequence>,
+        );
+      if (sfx.impact)
+        out.push(
+          <Sequence key={`i${p.index}`} from={p.from} durationInFrames={30} name={`impact ${p.index + 1}`}>
+            <Audio src={sfx.impact} volume={0.55} />
+          </Sequence>,
+        );
+    }
+  }
+  return <>{out}</>;
+}
+
+/** Zack-style captions: 2–3 words at a time, big and centred, the key word in safety yellow. */
+function CineCaption({ p }: { p: PlacedBeat }) {
+  const f = useCurrentFrame();
+  const groups: (typeof p.words)[] = [];
+  let cur: typeof p.words = [];
+  for (const w of p.words) {
+    cur.push(w);
+    if (cur.length >= 3 || /[.,!?;:]$/.test(w.text)) {
+      groups.push(cur);
+      cur = [];
+    }
+  }
+  if (cur.length) groups.push(cur);
+  // the hook is on screen from frame 0 of the reel
+  const at = (gr: typeof p.words) => (p.index === 0 && gr === groups[0] ? -99 : gr[0].at - 1);
+  const g = [...groups].reverse().find((gr) => f >= at(gr)) ?? (p.index === 0 ? groups[0] : null);
+  if (!g) return null;
+  const start = Math.max(0, at(g));
+  const pop = pr(f, start, 4);
+  // key word: the one marked *like this*, else a number, else the longest word
+  const marked = g.findIndex((w) => w.em);
+  const num = g.findIndex((w) => /\d/.test(w.text));
+  const longest = g.reduce((bi, w, i) => (w.text.replace(/[^\w]/g, "").length > g[bi].text.replace(/[^\w]/g, "").length ? i : bi), 0);
+  const key = marked >= 0 ? marked : num >= 0 ? num : g.length > 1 ? longest : -1;
+  return (
+    <AbsoluteFill style={{ top: 1080, height: 340, display: "flex", flexDirection: "row", flexWrap: "wrap", justifyContent: "center", alignContent: "center", columnGap: 22, padding: "0 90px", transform: `scale(${1.08 - 0.08 * pop})`, opacity: p.index === 0 && g === groups[0] ? 1 : Math.min(1, pop * 2) }}>
+      {g.map((w, i) => (
+        <span
+          key={i}
+          style={{
+            fontFamily: display,
+            fontWeight: 800,
+            fontSize: 96,
+            lineHeight: 1.05,
+            letterSpacing: "-0.01em",
+            color: i === key ? "#FFC400" : "#FFFFFF",
+            textShadow: outline("#000000", 6),
+          }}
+        >
+          {w.text}
+        </span>
+      ))}
+    </AbsoluteFill>
   );
 }

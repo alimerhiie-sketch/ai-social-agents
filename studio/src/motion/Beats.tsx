@@ -8,6 +8,7 @@ import { mix, pr, type Theme } from "./theme";
 import { LOOKS, objectLook, type Look } from "./looks";
 import { SceneBeat } from "./cartoon/Scene";
 import { ObjectBeat } from "./three/Object3D";
+import { ShotBeat } from "./cine/Shot";
 
 // The motion vocabulary. Every visual keeps moving while it holds; entrances use expo-out, no overshoot.
 
@@ -656,6 +657,8 @@ export function BeatVisual(props: BeatProps) {
   switch (props.beat.visual) {
     case "scene":
       return <SceneBeat beat={props.beat} look={props.look ?? LOOKS.brand} d={props.d} seed={props.seed} mascot={props.mascot} />;
+    case "shot":
+      return <ShotBeat beat={props.beat} look={props.look ?? LOOKS.cinematic} d={props.d} seed={props.seed} first={props.seed === 1} />;
     case "object":
       return <ObjectBeat beat={props.beat} look={objectLook(props.look ?? LOOKS.blueprint)} d={props.d} seed={props.seed} backdrop={props.look?.id === "paper-blueprint"} />;
     case "icon":

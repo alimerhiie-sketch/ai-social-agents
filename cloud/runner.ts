@@ -26,7 +26,7 @@ const MAX_RUNTIME_MS = 5.5 * 3600_000; // stay under Actions' 6 h job limit
 const IDLE_EXIT_MS = 60_000;
 const AGENT_TIMEOUT_MS = 20 * 60_000;
 const DEVELOP_TIMEOUT_MS = 45 * 60_000; // the Agent Developer researches for every agent in one run
-const RENDER_TIMEOUT_MS = 45 * 60_000;
+const RENDER_TIMEOUT_MS = 75 * 60_000; // hand-drawn looks are filter-heavy on the CPU runner
 
 const SCHEMAS: Partial<Record<JobKind, object>> = {
   strategy: strategySchema,

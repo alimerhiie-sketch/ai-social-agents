@@ -51,7 +51,7 @@ export const MODELS = [
 ];
 
 export { ART_STYLES } from "../../studio/src/artStyles";
-export { REEL_LOOKS, REEL_LOOK_IDS, isReelLook } from "../../studio/src/motion/lookIds";
+export { REEL_LOOKS, REEL_LOOK_IDS, QUOTA_LOOKS, isReelLook } from "../../studio/src/motion/lookIds";
 
 export const CONTENT_STATUSES = ["scripted", "approved", "producing", "review", "ready", "scheduled", "posted", "rejected"] as const;
 export type ContentStatus = (typeof CONTENT_STATUSES)[number];

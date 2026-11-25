@@ -107,14 +107,14 @@ export const planSchema = obj({
 
 const beat = obj({
   say: str("The exact words of this scene's voiceover spoken during this beat, in order (3–8 words)"),
-  visual: en(["scene", "object", "title", "icon", "icons", "split", "counter", "bars", "versus", "flow", "meter", "character", "chat", "checklist", "painting"]),
+  visual: en(["shot", "scene", "object", "title", "icon", "icons", "split", "counter", "bars", "versus", "flow", "meter", "character", "chat", "checklist", "painting"]),
   text: str("On-screen words for the visual: title text, icon label, split phrase with | between chunks, meter limit label, speech bubble. '' for none"),
   icon: str("Lucide icon name in kebab-case for icon / character prop, e.g. 'scissors', 'coins', 'message-circle'. '' for none"),
   items: list(obj({ icon: str("Lucide icon name or ''"), label: str(), value: str() }), "Rows for icons / bars / versus / flow / chat / checklist; [] otherwise"),
   number: str("counter: the figure, e.g. '100,000', '$20', '75%'. '' otherwise"),
   level: num("meter fill or counter ring, 0–1. 0 otherwise"),
   pose: en(["idle", "wave", "point", "think", "shrug", "cheer", "hold", "surprised"]),
-  transition: en(["cut", "whip", "zoom", "wipe", "iris"]),
+  transition: en(["cut", "whip", "zoom", "wipe", "iris", "flash"]),
   set: en(["none", "desk", "park", "stage", "city"], "scene: where it happens"),
   action: en(["stand", "wave", "point", "think", "shrug", "shock", "happy", "tired", "type", "phone", "sit", "walk", "present"], "scene: what the person does"),
   who: en(["person", "mascot"], "scene: the relatable person, or the account's mascot"),
@@ -127,6 +127,10 @@ const beat = obj({
   ),
   shot: en(["wide", "close"]),
   object: en(["none", "engine", "chip", "server", "brain", "gem", "globe", "phone", "coins", "cubes", "lock"], "object: the 3D hero object"),
+  imagePrompt: str("shot (cinematic look only): one photoreal frame, what is in it and how it is lit, 1–2 sentences; '' otherwise"),
+  move: en(["push-in", "pull-out", "pan-left", "pan-right", "tilt-up", "tilt-down", "orbit", "crash-zoom"], "shot: the camera move"),
+  callout: en(["none", "arrow", "ring", "xray", "counter", "label"], "shot: overlay pointing at the thing (text = its label; counter uses number)"),
+  at: obj({ x: num("0–1 from the left"), y: num("0–1 from the top") }, "shot: where the thing the callout points at is in the frame"),
 });
 
 const scene = obj({
@@ -151,7 +155,7 @@ const scene = obj({
 
 export const scenePlanSchema = obj({
   notes: str("One sentence on the visual idea running through the piece"),
-  look: en(["paper-blueprint", "paper", "blueprint", "doodle", "lofi", "cosmic", "brand"], "Reels: the animation style of the whole video (the Strategist's LOOK when given). Slides: 'brand'"),
+  look: en(["cinematic", "paper-blueprint", "paper", "blueprint", "doodle", "lofi", "cosmic", "brand"], "Reels: the animation style of the whole video (the Strategist's LOOK when given). Slides: 'brand'"),
   scenes: list(scene),
 });
 

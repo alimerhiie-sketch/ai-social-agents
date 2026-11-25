@@ -1,7 +1,7 @@
 import { q, sql } from "../db";
 import type { Account, Job } from "../types";
 import { longDate, TZ, weekdayShort } from "../dates";
-import { ART_STYLES, REEL_LOOKS, isReelLook } from "../options";
+import { ART_STYLES, QUOTA_LOOKS, REEL_LOOKS, isReelLook } from "../options";
 import { developerPrompt } from "./developer";
 import { upgradesBlock } from "./upgrades";
 import { analysisPrompt, briefPrompt, dayMix, resultsBlock } from "../analytics/review";
@@ -11,6 +11,15 @@ import { analysisPrompt, briefPrompt, dayMix, resultsBlock } from "../analytics/
 
 const today = () =>
   new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: TZ });
+
+/**
+ * The reel looks an account may use. Looks that spend the free image quota (cinematic) are opt-in: an account
+ * gets them only when its art styles list them, and then it uses only the reel looks it lists.
+ */
+function reelLooksFor(a: Account) {
+  const listed = REEL_LOOKS.filter((l) => a.art_styles.includes(l.id));
+  return listed.length ? listed : REEL_LOOKS.filter((l) => !QUOTA_LOOKS.includes(l.id));
+}
 
 function profile(a: Account) {
   return JSON.stringify(
@@ -26,7 +35,7 @@ function profile(a: Account) {
       allowed_formats: a.formats,
       allowed_video_styles: a.video_styles,
       allowed_art_styles: a.art_styles.length ? a.art_styles : ["ghibli"],
-      reel_looks: REEL_LOOKS.map((l) => `${l.id}: ${l.label} — ${l.when}`),
+      reel_looks: reelLooksFor(a).map((l) => `${l.id}: ${l.label} — ${l.when}`),
       recurring_character: a.character || "(none — invent scenes without a mascot)",
       daily_output: `${a.reels_per_day} short video(s) + ${a.posts_per_day} feed post(s) every day`,
       brand_colors: a.brand_colors,
