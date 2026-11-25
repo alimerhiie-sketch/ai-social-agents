@@ -212,6 +212,8 @@ async function basePrompt(job: Job): Promise<string> {
           : `RECURRING CHARACTER: ${a.character ? "yes — set withCharacter true where the character appears, and never name or describe it in imagePrompt (the pipeline inserts its description)" : "none — set withCharacter false everywhere"}`,
         `ACCOUNT LANGUAGE: ${a.language}`,
         ...(job.kind === "design" ? ["POSTER LOOK: slides render as bold flat posters drawn in code (no painted images; ignore the art style, leave imagePrompt empty)."] : []),
+        // The account's own playbook (hook rules, pacing, video direction) applies to the visuals too.
+        ...(a.description ? ["", `ACCOUNT: ${a.name} — ${a.niche}`, "ACCOUNT PLAYBOOK (its hook, pacing and video rules override the defaults above where they are stricter):", a.description] : []),
         "",
         "THE PIECE",
         JSON.stringify(piece, null, 2),
